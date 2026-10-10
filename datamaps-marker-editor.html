@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+<title>DataMaps Marker Editor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: toolbar on top, map canvas beside a narrow inspector column, JSON in/out underneath. */
+:root {
+  --bg: #f3f5f8; --panel: #ffffff; --sunk: #e8ecf1; --line: #cfd6df;
+  --fg: #18202b; --muted: #5a6677; --accent: #0b6bcb; --accent-fg: #ffffff;
+  --sel: #ffb000; --bad: #b3261e; --ok: #1b7a43;
+  --map-label-bg: rgba(12, 16, 22, .82); --map-label-fg: #ffffff; --pin-edge: #ffffff;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1218; --panel: #161c25; --sunk: #0a0d12; --line: #2b3542;
+  --fg: #e6ebf2; --muted: #93a0b2; --accent: #5aa9ff; --accent-fg: #06121f;
+  --sel: #ffc23d; --bad: #ff8a80; --ok: #6fd69b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1218; --panel: #161c25; --sunk: #0a0d12; --line: #2b3542;
+  --fg: #e6ebf2; --muted: #93a0b2; --accent: #5aa9ff; --accent-fg: #06121f;
+  --sel: #ffc23d; --bad: #ff8a80; --ok: #6fd69b; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); padding-inline: 16px; padding-block: 18px 32px }
+.app { max-width: 1500px; margin-inline: auto; display: flex; flex-direction: column; gap: 14px }
+h1 { font-size: 20px; font-weight: 600; margin: 0 }
+h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 }
+.sub { margin: 2px 0 0; color: var(--muted); max-width: 70ch }
+button, .btn, input, select, textarea { font: inherit; color: inherit }
+button, .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap }
+button:hover, .btn:hover { border-color: var(--accent) }
+button:disabled { opacity: .45; cursor: default }
+button.primary, button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg) }
+button.danger { color: var(--bad) }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0 }
+.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center }
+.toolbar .sep { flex: 1 1 0 }
+.chk { display: inline-flex; align-items: center; gap: 6px }
+.zoom { display: inline-flex; align-items: center; gap: 6px; color: var(--muted) }
+.zoom input { width: 110px }
+.readout { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 17ch }
+
+.work { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start }
+@media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr) } }
+.viewport { background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; overflow: auto; min-height: 240px }
+.stage { position: relative; margin: 0 auto; user-select: none; -webkit-user-select: none;
+  background-color: var(--sunk);
+  background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 10% 10% }
+.stage.adding { cursor: crosshair }
+.stage img.bg { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; display: block; pointer-events: none }
+.hint { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; color: var(--muted); pointer-events: none }
+.hint div { background: var(--panel); border: 1px dashed var(--line); border-radius: 8px; padding: 12px 16px; max-width: 34ch }
+.mk { position: absolute; transform: translate(-50%, -50%); padding: 0; border: 0; background: none; border-radius: 50%; cursor: grab; touch-action: none; display: block }
+.mk:hover { border: 0 }
+.mk:active { cursor: grabbing }
+.mk .dot { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--c); border: 2px solid var(--pin-edge); box-shadow: 0 1px 4px rgba(0,0,0,.55) }
+.mk img { display: block; width: 34px; height: 34px; object-fit: contain; max-width: none; pointer-events: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)) }
+.mk.on { outline: 2px solid var(--sel); outline-offset: 3px; z-index: 5 }
+.mk .lab { position: absolute; left: 50%; bottom: calc(100% + 4px); transform: translateX(-50%); background: var(--map-label-bg); color: var(--map-label-fg); font-size: 11px; line-height: 1.2; padding: 2px 6px; border-radius: 3px; white-space: nowrap; pointer-events: none }
+
+aside { display: flex; flex-direction: column; gap: 12px; min-width: 0 }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0 }
+.rows { display: flex; flex-direction: column; gap: 2px; max-height: 250px; overflow-y: auto }
+.row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; border: 1px solid transparent; background: none; padding: 4px 6px; border-radius: 5px; white-space: normal }
+.row.on { background: var(--sunk); border-color: var(--line) }
+.row .sw { width: 12px; height: 12px; border-radius: 50%; background: var(--c) }
+.row .nm { overflow-wrap: anywhere }
+.row .num { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums }
+.note { color: var(--muted); font-size: 12.5px; margin: 0 }
+.form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+.form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0 }
+.form .wide { grid-column: 1 / -1 }
+.form input, .form select, .form textarea, textarea#json { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; color: var(--fg); width: 100%; min-width: 0 }
+.form input.num { font-family: var(--mono) }
+.form textarea { resize: vertical; min-height: 54px }
+
+.jsonhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.jsonhead .sep { flex: 1 1 0 }
+#status { font-size: 13px; color: var(--muted); min-height: 1.4em }
+#status.bad { color: var(--bad) } #status.ok { color: var(--ok) }
+textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; tab-size: 2; white-space: pre; overflow: auto }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header>
+    <h1>DataMaps Marker Editor</h1>
+    <p class="sub">Paste a map's JSON, load its background image, drag markers into place, then copy the JSON back into the wiki. Everything stays in this browser tab; nothing is uploaded.</p>
+  </header>
+
+  <div class="toolbar">
+    <label class="btn">Background image…<input type="file" id="bgFile" accept="image/*"></label>
+    <label class="btn">Marker icons…<input type="file" id="iconFiles" accept="image/*" multiple></label>
+    <button id="addBtn" aria-pressed="false" type="button">+ Add marker</button>
+    <button id="undoBtn" type="button" disabled>Undo</button>
+    <label class="chk"><input type="checkbox" id="showNames" checked> Show names</label>
+    <span class="sep"></span>
+    <label class="zoom">Zoom <input type="range" id="zoom" min="1" max="6" step="0.25" value="1"></label>
+    <span class="readout" id="readout" aria-live="off">x –, y –</span>
+  </div>
+
+  <div class="work">
+    <div class="viewport" id="viewport">
+      <div class="stage" id="stage">
+        <img class="bg" id="bg" alt="" hidden>
+        <div class="hint" id="hint"><div id="hintText"></div></div>
+        <div id="layer"></div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="card">
+        <h2>Groups</h2>
+        <p class="note">Pick the group that “Add marker” places into.</p>
+        <div class="rows" id="groups"></div>
+      </div>
+      <div class="card">
+        <h2 id="listTitle">Markers</h2>
+        <div class="rows" id="list"></div>
+      </div>
+      <div class="card" id="editor">
+        <h2>Selected marker</h2>
+        <p class="note" id="noSel">Click a marker on the map or in the list. Arrow keys nudge it by 0.1 (Shift: 1).</p>
+        <div class="form" id="form" hidden>
+          <label class="wide">Name<input id="fName" type="text"></label>
+          <label>ID<input id="fId" type="text"></label>
+          <label>Group<select id="fGroup"></select></label>
+          <label>X<input id="fX" class="num" type="number" step="0.01"></label>
+          <label>Y<input id="fY" class="num" type="number" step="0.01"></label>
+          <label class="wide">Description (one line per entry)<textarea id="fDesc"></textarea></label>
+          <label class="wide">Article link (page title, optional)<input id="fArticle" type="text" placeholder="Map:Test"></label>
+          <div class="wide"><button class="danger" id="delBtn" type="button">Delete marker</button></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <section class="card">
+    <div class="jsonhead">
+      <h2>Map JSON</h2>
+      <span class="sep"></span>
+      <button id="loadBtn" type="button">Load pasted JSON</button>
+      <button id="copyBtn" class="primary" type="button">Copy JSON</button>
+    </div>
+    <div id="status" role="status"></div>
+    <textarea id="json" spellcheck="false" aria-label="Map JSON"></textarea>
+  </section>
+</div>
+
+<script>
+(function () {
+  var SAMPLE = {
+    "$schema": "https://leontlibrary.miraheze.org/1.46/extensions/DataMaps/schemas/v17.4.json",
+    "settings": { "enableSearch": true, "enableTooltipPopups": true, "showCoordinates": false },
+    "background": { "name": "Test Map 1", "image": "MapTest.png" },
+    "groups": {
+      "amNamed": { "name": "Named", "icon": "MapIconNamed.png", "size": [128, 128] },
+      "amMerchant": { "name": "Merchant", "icon": "MapIconMerchant.png", "size": [128, 128] },
+      "amBanker": { "name": "Banker", "icon": "MapIconBanker.png", "size": [128, 128] },
+      "amStable": { "name": "Stable Master", "icon": "MapIconStableMaster.png", "size": [128, 128] },
+      "amClassTrainer": { "name": "Class Trainer", "icon": "MapIconClassTrainer.png", "size": [128, 128] },
+      "amTradeTrainer": { "name": "Tradeskill Trainer", "icon": "MapIconTradeskillTrainer.png", "size": [128, 128] },
+      "amZone": { "name": "Zone", "icon": "MapIconZone.png", "size": [128, 128] }
+    },
+    "markers": {
+      "amNamed": [{ "id": "test-named", "x": 82.79, "y": 55.5, "name": "Test Named", "description": ["Named"] }],
+      "amMerchant": [{ "id": "test-merchant", "x": 82.79, "y": 85.5, "name": "Test Merchant", "description": ["Merchant"] }],
+      "amBanker": [{ "id": "test-banker", "x": 62.79, "y": 45.5, "name": "Test Banker", "description": ["Banker"] }],
+      "amStable": [{ "id": "test-stable", "x": 32.79, "y": 65.5, "name": "Test Stable Master", "description": ["Stable Master"] }],
+      "amClassTrainer": [{ "id": "test-warrior", "x": 15.21, "y": 30.65, "name": "Test Warrior Trainer", "description": ["Warrior Trainer"] }],
+      "amTradeTrainer": [
+        { "id": "test-metalworking", "x": 32.79, "y": 75.5, "name": "Test Metalworking Trainer", "description": ["Metalworking Trainer"] },
+        { "id": "test-butchering", "x": 32.79, "y": 44.5, "name": "Test Butchering Trainer", "description": ["Butchering Trainer"] }
+      ],
+      "amZone": [{ "id": "test-zone", "x": 82.79, "y": 40.5, "name": "Zone Icon", "description": ["Zone"] }]
+    }
+  };
+  var HUES = [355, 205, 40, 285, 130, 22, 180, 320, 70, 240];
+  var $ = function (id) { return document.getElementById(id); };
+  var viewport = $('viewport'), stage = $('stage'), layer = $('layer'), bg = $('bg'), ta = $('json');
+
+  var data = SAMPLE, sel = null, activeGroup = null, addMode = false;
+  var icons = {}, aspect = 1, zoom = 1, undo = [], drag = null;
+
+  /* ---------- JSON formatting: tabs, short arrays kept on one line ---------- */
+  function prim(v) { return v === null || typeof v !== 'object'; }
+  function fmt(v, ind) {
+    if (prim(v)) return JSON.stringify(v);
+    var inner = ind + '\t';
+    if (Array.isArray(v)) {
+      if (!v.length) return '[]';
+      if (v.every(prim)) return '[ ' + v.map(function (x) { return JSON.stringify(x); }).join(', ') + ' ]';
+      return '[\n' + v.map(function (x) { return inner + fmt(x, inner); }).join(',\n') + '\n' + ind + ']';
+    }
+    var keys = Object.keys(v);
+    if (!keys.length) return '{}';
+    return '{\n' + keys.map(function (k) { return inner + JSON.stringify(k) + ': ' + fmt(v[k], inner); }).join(',\n') + '\n' + ind + '}';
+  }
+
+  /* ---------- coordinates ---------- */
+  function pt(p, order) {
+    if (Array.isArray(p)) return order === 'xy' ? { x: p[0], y: p[1] } : { x: p[1], y: p[0] };
+    return p && typeof p === 'object' ? { x: p.x, y: p.y } : null;
+  }
+  function space() {
+    var c = data.crs, co = data.coordinates || {}, a, b;
+    var order = co.order || (c && !Array.isArray(c) && c.order) || 'yx';
+    if (Array.isArray(c)) { a = pt(c[0], order); b = pt(c[1], order); }
+    else if (c && typeof c === 'object') { a = pt(c.topLeft || [0, 0], order); b = pt(c.bottomRight || [100, 100], order); }
+    var ok = a && b && [a.x, a.y, b.x, b.y].every(isFinite) && a.x !== b.x && a.y !== b.y;
+    if (!ok) { a = { x: 0, y: 0 }; b = { x: 100, y: 100 }; }
+    return { a: a, b: b, flip: co.origin === 'bottomLeft' };
+  }
+  function getXY(m) { return { x: Number('x' in m ? m.x : m.lon), y: Number('y' in m ? m.y : m.lat) }; }
+  function setXY(m, x, y) { if ('lat' in m || 'lon' in m) { m.lon = x; m.lat = y; } else { m.x = x; m.y = y; } }
+  function toFrac(m) {
+    var s = space(), p = getXY(m);
+    var fx = (p.x - s.a.x) / (s.b.x - s.a.x), fy = (p.y - s.a.y) / (s.b.y - s.a.y);
+    return { fx: fx, fy: s.flip ? 1 - fy : fy };
+  }
+  function r2(n) { return Math.round(n * 100) / 100; }
+  function fromFrac(fx, fy) {
+    var s = space();
+    if (s.flip) fy = 1 - fy;
+    return { x: r2(s.a.x + fx * (s.b.x - s.a.x)), y: r2(s.a.y + fy * (s.b.y - s.a.y)) };
+  }
+  function clamp(n) { return Math.max(0, Math.min(1, n)); }
+
+  /* ---------- data helpers ---------- */
+  function groupOf(key) { return key.trim().split(/\s+/)[0]; }
+  function groupIds() {
+    var ids = Object.keys(data.groups || {});
+    Object.keys(data.markers || {}).forEach(function (k) { var g = groupOf(k); if (ids.indexOf(g) < 0) ids.push(g); });
+    return ids;
+  }
+  function groupName(g) { var d = (data.groups || {})[g]; return (d && d.name) || g; }
+  function hue(g) { var i = groupIds().indexOf(g); return 'hsl(' + HUES[(i < 0 ? 0 : i) % HUES.length] + ' 72% 48%)'; }
+  function norm(s) { return String(s).replace(/^file:/i, '').replace(/_/g, ' ').trim().toLowerCase(); }
+  function iconFor(g, m) {
+    var d = (data.groups || {})[g], name = (m && m.icon) || (d && d.icon);
+    return name ? icons[norm(name)] : null;
+  }
+  function eachMarker(fn) {
+    Object.keys(data.markers || {}).forEach(function (k) {
+      (data.markers[k] || []).forEach(function (m, i) { fn(m, k, i); });
+    });
+  }
+  function cur() { return sel && data.markers && data.markers[sel.k] ? data.markers[sel.k][sel.i] : null; }
+  function bgName() {
+    var b = data.background || (data.backgrounds || [])[0];
+    return typeof b === 'string' ? b : (b && b.image) || '';
+  }
+  function allIds() { var s = {}; eachMarker(function (m) { if (m.id != null) s[m.id] = 1; }); return s; }
+
+  /* ---------- undo ---------- */
+  function snap() { return JSON.stringify({ d: data, s: sel }); }
+  function pushUndo() { var s = snap(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 200) undo.shift(); $('undoBtn').disabled = false; }
+  function doUndo() {
+    var now = snap();
+    while (undo.length) {
+      var s = undo.pop();
+      if (s !== now) { var o = JSON.parse(s); data = o.d; sel = o.s; break; }
+    }
+    $('undoBtn').disabled = !undo.length;
+    render();
+  }
+
+  /* ---------- rendering ---------- */
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function place(node, m) { var f = toFrac(m); node.style.left = (f.fx * 100) + '%'; node.style.top = (f.fy * 100) + '%'; }
+
+  function renderMarkers() {
+    layer.textContent = '';
+    var names = $('showNames').checked;
+    eachMarker(function (m, k, i) {
+      var g = groupOf(k), b = el('button', 'mk' + (sel && sel.k === k && sel.i === i ? ' on' : ''));
+      b.type = 'button'; b.dataset.k = k; b.dataset.i = i;
+      b.setAttribute('aria-label', (m.name || m.id || 'Marker') + ' (' + groupName(g) + ')');
+      var src = iconFor(g, m);
+      if (src) { var im = el('img'); im.src = src; im.alt = ''; im.draggable = false; b.appendChild(im); }
+      else { var d = el('span', 'dot'); d.style.setProperty('--c', hue(g)); b.appendChild(d); }
+      if (names && m.name) b.appendChild(el('span', 'lab', m.name));
+      place(b, m);
+      layer.appendChild(b);
+    });
+  }
+  function markerEl() { return sel ? layer.querySelector('.mk.on') : null; }
+
+  function renderGroups() {
+    var box = $('groups'); box.textContent = '';
+    var ids = groupIds();
+    if (ids.indexOf(activeGroup) < 0) activeGroup = ids[0] || null;
+    var counts = {};
+    eachMarker(function (m, k) { var g = groupOf(k); counts[g] = (counts[g] || 0) + 1; });
+    ids.forEach(function (g) {
+      var b = el('button', 'row' + (g === activeGroup ? ' on' : '')); b.type = 'button';
+      b.setAttribute('aria-pressed', 'false');
+      var sw = el('span', 'sw'); sw.style.setProperty('--c', hue(g));
+      b.appendChild(sw); b.appendChild(el('span', 'nm', groupName(g))); b.appendChild(el('span', 'num', String(counts[g] || 0)));
+      b.addEventListener('click', function () { activeGroup = g; renderGroups(); });
+      box.appendChild(b);
+    });
+    if (!ids.length) box.appendChild(el('p', 'note', 'This map has no groups yet. Add one in the JSON first.'));
+  }
+
+  function renderList() {
+    var box = $('list'); box.textContent = '';
+    var n = 0;
+    eachMarker(function (m, k, i) {
+      n++;
+      var p = getXY(m), b = el('button', 'row' + (sel && sel.k === k && sel.i === i ? ' on' : '')); b.type = 'button';
+      var sw = el('span', 'sw'); sw.style.setProperty('--c', hue(groupOf(k)));
+      b.appendChild(sw); b.appendChild(el('span', 'nm', m.name || String(m.id || '(unnamed)')));
+      b.appendChild(el('span', 'num', p.x + ', ' + p.y));
+      b.addEventListener('click', function () {
+        sel = { k: k, i: i }; render();
+        var me = markerEl(); if (me) { me.scrollIntoView({ block: 'nearest', inline: 'nearest' }); me.focus({ preventScroll: true }); }
+      });
+      box.appendChild(b);
+    });
+    $('listTitle').textContent = 'Markers (' + n + ')';
+    if (!n) box.appendChild(el('p', 'note', 'No markers yet. Turn on “Add marker” and click the map.'));
+  }
+
+  function renderEditor() {
+    var m = cur();
+    $('form').hidden = !m; $('noSel').hidden = !!m;
+    if (!m) return;
+    var p = getXY(m), gs = $('fGroup'); gs.textContent = '';
+    groupIds().forEach(function (g) { var o = el('option', null, groupName(g)); o.value = g; gs.appendChild(o); });
+    gs.value = groupOf(sel.k);
+    $('fName').value = m.name || '';
+    $('fId').value = m.id == null ? '' : m.id;
+    $('fX').value = p.x; $('fY').value = p.y;
+    $('fDesc').value = Array.isArray(m.description) ? m.description.join('\n') : (m.description || '');
+    $('fArticle').value = m.article || '';
+  }
+
+  function writeJSON() {
+    ta.value = fmt(data, '') + '\n';
+    try { localStorage.setItem('datamaps-editor-draft', ta.value); } catch (e) {}
+  }
+  function renderHint() {
+    $('hint').hidden = !bg.hidden;
+    var n = bgName();
+    $('hintText').textContent = 'No background loaded. Choose “Background image…” and pick ' + (n ? n : 'the map image') + ', or drop it here.';
+  }
+  function render() { renderGroups(); renderList(); renderMarkers(); renderEditor(); renderHint(); writeJSON(); }
+  function say(msg, cls) { var s = $('status'); s.textContent = msg; s.className = cls || ''; }
+
+  /* ---------- sizing and zoom ---------- */
+  function layout(keepCentre) {
+    var cx = 0.5, cy = 0.5, sw = stage.offsetWidth, sh = stage.offsetHeight;
+    if (keepCentre && sw && sh) { cx = (viewport.scrollLeft + viewport.clientWidth / 2) / sw; cy = (viewport.scrollTop + viewport.clientHeight / 2) / sh; }
+    var avail = viewport.parentElement.clientWidth - 2;
+    var maxH = Math.max(320, window.innerHeight * 0.8);
+    var fitW = Math.min(avail, maxH * aspect);
+    viewport.style.height = Math.round(fitW / aspect + 2) + 'px';
+    stage.style.width = Math.round(fitW * zoom) + 'px';
+    stage.style.height = Math.round(fitW * zoom / aspect) + 'px';
+    if (keepCentre) {
+      viewport.scrollLeft = cx * stage.offsetWidth - viewport.clientWidth / 2;
+      viewport.scrollTop = cy * stage.offsetHeight - viewport.clientHeight / 2;
+    }
+  }
+  $('zoom').addEventListener('input', function () { zoom = Number(this.value) || 1; layout(true); });
+  window.addEventListener('resize', function () { layout(true); });
+
+  /* ---------- images ---------- */
+  function setBackground(file) {
+    var url = URL.createObjectURL(file), probe = new Image();
+    probe.onload = function () {
+      aspect = probe.naturalWidth / probe.naturalHeight || 1;
+      bg.src = url; bg.hidden = false; renderHint(); layout(false);
+      say('Background loaded: ' + file.name + ' (' + probe.naturalWidth + ' × ' + probe.naturalHeight + ' px).', 'ok');
+    };
+    probe.onerror = function () { say('That file could not be read as an image.', 'bad'); };
+    probe.src = url;
+  }
+  $('bgFile').addEventListener('change', function () { if (this.files[0]) setBackground(this.files[0]); this.value = ''; });
+  $('iconFiles').addEventListener('change', function () {
+    var wanted = {}, hit = 0, miss = [];
+    Object.keys(data.groups || {}).forEach(function (g) { if (data.groups[g].icon) wanted[norm(data.groups[g].icon)] = 1; });
+    eachMarker(function (m) { if (m.icon) wanted[norm(m.icon)] = 1; });
+    Array.prototype.forEach.call(this.files, function (f) {
+      icons[norm(f.name)] = URL.createObjectURL(f);
+      if (wanted[norm(f.name)]) hit++; else miss.push(f.name);
+    });
+    this.value = '';
+    renderMarkers();
+    say(hit + ' icon file' + (hit === 1 ? '' : 's') + ' matched by name.' + (miss.length ? ' Not used by this map: ' + miss.join(', ') + '.' : ''), miss.length && !hit ? 'bad' : 'ok');
+  });
+  viewport.addEventListener('dragover', function (e) { e.preventDefault(); });
+  viewport.addEventListener('drop', function (e) {
+    e.preventDefault();
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f && /^image\//.test(f.type)) setBackground(f);
+  });
+
+  /* ---------- pointer: drag, add, readout ---------- */
+  function fracAt(e) {
+    var r = stage.getBoundingClientRect();
+    return { fx: (e.clientX - r.left) / r.width, fy: (e.clientY - r.top) / r.height };
+  }
+  function showXY(p) { $('readout').textContent = 'x ' + p.x.toFixed(2) + ', y ' + p.y.toFixed(2); }
+  function moveSel(fx, fy) {
+    var m = cur(); if (!m) return;
+    var p = fromFrac(clamp(fx), clamp(fy));
+    setXY(m, p.x, p.y);
+    var me = markerEl(); if (me) place(me, m);
+    $('fX').value = p.x; $('fY').value = p.y;
+    showXY(p);
+  }
+  function setAdd(on) { addMode = on; $('addBtn').setAttribute('aria-pressed', String(on)); stage.classList.toggle('adding', on); }
+  function addAt(f) {
+    if (!activeGroup) { say('Add a group to the JSON before placing markers.', 'bad'); return; }
+    pushUndo();
+    if (!data.markers || typeof data.markers !== 'object') data.markers = {};
+    var key = activeGroup;
+    if (!data.markers[key]) {
+      var alt = Object.keys(data.markers).filter(function (k) { return groupOf(k) === activeGroup; })[0];
+      if (alt) key = alt; else data.markers[key] = [];
+    }
+    var ids = allIds(), n = 1, base = activeGroup.replace(/^am/, '').toLowerCase() || 'marker';
+    while (ids[base + '-' + n]) n++;
+    var p = fromFrac(clamp(f.fx), clamp(f.fy));
+    data.markers[key].push({ id: base + '-' + n, x: p.x, y: p.y, name: 'New ' + groupName(activeGroup), description: [groupName(activeGroup)] });
+    sel = { k: key, i: data.markers[key].length - 1 };
+    render();
+    $('fName').focus(); $('fName').select();
+  }
+
+  stage.addEventListener('pointerdown', function (e) {
+    if (e.button) return;
+    var b = e.target.closest ? e.target.closest('.mk') : null;
+    if (b) {
+      e.preventDefault();
+      sel = { k: b.dataset.k, i: Number(b.dataset.i) };
+      renderList(); renderMarkers(); renderEditor();
+      var me = markerEl(); if (me) me.focus({ preventScroll: true });
+      var f = fracAt(e), mf = toFrac(cur());
+      drag = { id: e.pointerId, ox: f.fx - mf.fx, oy: f.fy - mf.fy, sx: e.clientX, sy: e.clientY, moved: false };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+    } else if (addMode) {
+      e.preventDefault(); addAt(fracAt(e));
+    }
+  });
+  stage.addEventListener('pointermove', function (e) {
+    var f = fracAt(e);
+    if (drag && drag.id === e.pointerId) {
+      if (!drag.moved) {
+        if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 3) return;
+        drag.moved = true; pushUndo();
+      }
+      moveSel(f.fx - drag.ox, f.fy - drag.oy);
+    } else if (f.fx >= 0 && f.fx <= 1 && f.fy >= 0 && f.fy <= 1) showXY(fromFrac(f.fx, f.fy));
+  });
+  function endDrag(e) {
+    if (!drag || drag.id !== e.pointerId) return;
+    var moved = drag.moved; drag = null;
+    if (moved) { renderList(); writeJSON(); }
+  }
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+
+  function removeSel() {
+    if (!cur()) return;
+    pushUndo();
+    data.markers[sel.k].splice(sel.i, 1);
+    sel = null; render();
+  }
+  stage.addEventListener('keydown', function (e) {
+    if (!cur()) return;
+    var step = e.shiftKey ? 1 : 0.1, dx = 0, dy = 0;
+    if (e.key === 'ArrowLeft') dx = -step; else if (e.key === 'ArrowRight') dx = step;
+    else if (e.key === 'ArrowUp') dy = -step; else if (e.key === 'ArrowDown') dy = step;
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeSel(); return; }
+    else return;
+    e.preventDefault(); pushUndo();
+    var s = space(), f = toFrac(cur());
+    moveSel(f.fx + dx / Math.abs(s.b.x - s.a.x), f.fy + dy / Math.abs(s.b.y - s.a.y));
+    renderList(); writeJSON();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && addMode) setAdd(false);
+    var t = e.target, typing = t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+    if (!typing && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); doUndo(); }
+  });
+
+  /* ---------- toolbar ---------- */
+  $('addBtn').addEventListener('click', function () { setAdd(!addMode); });
+  $('undoBtn').addEventListener('click', doUndo);
+  $('showNames').addEventListener('change', renderMarkers);
+  $('delBtn').addEventListener('click', removeSel);
+
+  /* ---------- editor fields ---------- */
+  function setOrDrop(m, key, val) { if (val === '' || val == null) delete m[key]; else m[key] = val; }
+  function refreshAfterField() { renderList(); renderMarkers(); writeJSON(); }
+  $('form').addEventListener('focusin', pushUndo);
+  $('fName').addEventListener('input', function () { var m = cur(); if (m) { setOrDrop(m, 'name', this.value); refreshAfterField(); } });
+  $('fId').addEventListener('input', function () { var m = cur(); if (m) { setOrDrop(m, 'id', this.value.trim()); refreshAfterField(); } });
+  $('fArticle').addEventListener('input', function () { var m = cur(); if (m) { setOrDrop(m, 'article', this.value.trim()); refreshAfterField(); } });
+  $('fDesc').addEventListener('input', function () {
+    var m = cur(); if (!m) return;
+    var lines = this.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!lines.length) delete m.description;
+    else if (typeof m.description === 'string' && lines.length === 1) m.description = lines[0];
+    else m.description = lines;
+    refreshAfterField();
+  });
+  function xyField() {
+    var m = cur(); if (!m) return;
+    var x = Number($('fX').value), y = Number($('fY').value);
+    if (!isFinite(x) || !isFinite(y) || $('fX').value === '' || $('fY').value === '') return;
+    setXY(m, x, y); refreshAfterField();
+  }
+  $('fX').addEventListener('input', xyField);
+  $('fY').addEventListener('input', xyField);
+  $('fGroup').addEventListener('change', function () {
+    var m = cur(); if (!m) return;
+    var g = this.value;
+    data.markers[sel.k].splice(sel.i, 1);
+    var key = Object.keys(data.markers).filter(function (k) { return k === g; })[0] ||
+              Object.keys(data.markers).filter(function (k) { return groupOf(k) === g; })[0] || g;
+    if (!data.markers[key]) data.markers[key] = [];
+    data.markers[key].push(m);
+    sel = { k: key, i: data.markers[key].length - 1 };
+    activeGroup = g; render();
+  });
+
+  /* ---------- JSON in / out ---------- */
+  function check(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return 'The JSON must be one object in curly braces.';
+    if (o.markers != null && (typeof o.markers !== 'object' || Array.isArray(o.markers))) return '"markers" must be an object of group lists.';
+    var bad = null;
+    Object.keys(o.markers || {}).forEach(function (k) {
+      if (!Array.isArray(o.markers[k])) { bad = 'Markers for "' + k + '" must be a list in square brackets.'; return; }
+      o.markers[k].forEach(function (m, i) {
+        var p = m && typeof m === 'object' ? getXY(m) : { x: NaN, y: NaN };
+        if (!isFinite(p.x) || !isFinite(p.y)) bad = 'Marker ' + (i + 1) + ' in "' + k + '" has no numeric x and y.';
+      });
+    });
+    return bad;
+  }
+  function loadText(text, quiet) {
+    var o;
+    try { o = JSON.parse(text); }
+    catch (e) { if (!quiet) say('Not loaded. The text is not valid JSON: ' + e.message, 'bad'); return false; }
+    var err = check(o);
+    if (err) { if (!quiet) say('Not loaded. ' + err, 'bad'); return false; }
+    if (!quiet) pushUndo();
+    data = o; sel = null; activeGroup = null;
+    render();
+    if (!quiet) {
+      var n = 0; eachMarker(function () { n++; });
+      say('Loaded ' + n + ' marker' + (n === 1 ? '' : 's') + ' in ' + groupIds().length + ' groups.', 'ok');
+    }
+    return true;
+  }
+  $('loadBtn').addEventListener('click', function () { loadText(ta.value, false); });
+  ta.addEventListener('input', function () { say('Text changed. Press “Load pasted JSON” to show it on the map.', ''); });
+  $('copyBtn').addEventListener('click', function () {
+    var done = function () { say('Copied. Paste it into the map page on the wiki and save.', 'ok'); };
+    var manual = function () { ta.focus(); ta.select(); say('Copying was blocked here. The text is selected: press Ctrl+C (Cmd+C on Mac).', ''); };
+    try { navigator.clipboard.writeText(ta.value).then(done, manual); } catch (e) { manual(); }
+  });
+
+  /* ---------- start ---------- */
+  var draft = null;
+  try { draft = localStorage.getItem('datamaps-editor-draft'); } catch (e) {}
+  if (!(draft && loadText(draft, true))) { data = SAMPLE; render(); }
+  say(draft ? 'Restored the map you were last editing in this browser.' : 'Showing the TestTwo map. Paste different JSON below and press “Load pasted JSON” to switch maps.', '');
+  layout(false);
+  if (window.ResizeObserver) new ResizeObserver(function () { layout(true); }).observe(viewport.parentElement);
+})();
+</script>
+</body>
+</html>
