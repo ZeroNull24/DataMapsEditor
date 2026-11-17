@@ -73,6 +73,8 @@ aside { display: flex; flex-direction: column; gap: 12px; min-width: 0 }
 .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; border: 1px solid transparent; background: none; padding: 4px 6px; border-radius: 5px; white-space: normal }
 .row.on { background: var(--sunk); border-color: var(--line) }
 .row .sw { width: 12px; height: 12px; border-radius: 50%; background: var(--c) }
+.row .sw.ic { width: 16px; height: 16px; border-radius: 0; background: none; display: inline-grid; place-items: center }
+.row .sw.ic img { width: 16px; height: 16px; object-fit: contain; max-width: none }
 .row .nm { overflow-wrap: anywhere }
 .row .num { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums }
 .note { color: var(--muted); font-size: 12.5px; margin: 0 }
@@ -95,7 +97,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
 <div class="app">
   <header>
     <h1>DataMaps Marker Editor</h1>
-    <p class="sub">Paste a map's JSON, load its background image, drag markers into place, then copy the JSON back into the wiki. Everything stays in this browser tab; nothing is uploaded.</p>
+    <p class="sub">Paste a map's JSON, drag markers into place, then copy the JSON back into the wiki. The background picture and marker icons load from the wiki by their file names; use the buttons only for pictures that aren't on the wiki yet. Nothing is uploaded.</p>
   </header>
 
   <div class="toolbar">
@@ -192,6 +194,16 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   var data = SAMPLE, sel = null, activeGroup = null, addMode = false;
   var icons = {}, aspect = 1, zoom = 1, undo = [], drag = null;
 
+  /* ---------- pictures from the wiki ---------- */
+  // Icons and backgrounds are shown straight from the wiki by file name (Special:FilePath),
+  // so they always match what the map uses. Files picked with the buttons take priority.
+  var WIKI = 'https://leontlibrary.miraheze.org';
+  var badWikiFiles = {}, bgLoadedName = '', bgFromFile = false;
+  function wikiFile(name, width) {
+    var n = String(name).replace(/^file:/i, '').trim().replace(/ /g, '_');
+    return WIKI + '/wiki/Special:FilePath/' + encodeURIComponent(n) + (width ? '?width=' + width : '');
+  }
+
   /* ---------- JSON formatting: tabs, short arrays kept on one line ---------- */
   function prim(v) { return v === null || typeof v !== 'object'; }
   function fmt(v, ind) {
@@ -244,11 +256,35 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     return ids;
   }
   function groupName(g) { var d = (data.groups || {})[g]; return (d && d.name) || g; }
-  function hue(g) { var i = groupIds().indexOf(g); return 'hsl(' + HUES[(i < 0 ? 0 : i) % HUES.length] + ' 72% 48%)'; }
+  function hue(g) {
+    var d = (data.groups || {})[g];
+    if (d && typeof d.fillColor === 'string') return d.fillColor;          // the wiki's own dot colour
+    if (d && Array.isArray(d.fillColor)) return 'rgb(' + d.fillColor.slice(0, 3).join(',') + ')';
+    var i = groupIds().indexOf(g); return 'hsl(' + HUES[(i < 0 ? 0 : i) % HUES.length] + ' 72% 48%)';
+  }
   function norm(s) { return String(s).replace(/^file:/i, '').replace(/_/g, ' ').trim().toLowerCase(); }
   function iconFor(g, m) {
     var d = (data.groups || {})[g], name = (m && m.icon) || (d && d.icon);
-    return name ? icons[norm(name)] : null;
+    if (!name) return null;
+    if (icons[norm(name)]) return icons[norm(name)];
+    return badWikiFiles[norm(name)] ? null : wikiFile(name, 64);
+  }
+  // An icon the wiki doesn't have: remember it and draw a dot instead.
+  function iconFailed(g, m) {
+    var d = (data.groups || {})[g], name = (m && m.icon) || (d && d.icon);
+    if (name && !icons[norm(name)] && !badWikiFiles[norm(name)]) {
+      badWikiFiles[norm(name)] = 1;
+      say('Icon not found on the wiki: ' + name + '. Showing a dot instead (or pick the file with “Marker icons…”).', 'bad');
+      renderGroups(); renderList(); renderMarkers();
+    }
+  }
+  function swatch(g) {
+    var src = iconFor(g, null), sw;
+    if (src) {
+      sw = el('span', 'sw ic'); var im = el('img'); im.src = src; im.alt = ''; im.onerror = function () { iconFailed(g, null); };
+      sw.appendChild(im);
+    } else { sw = el('span', 'sw'); sw.style.setProperty('--c', hue(g)); }
+    return sw;
   }
   function eachMarker(fn) {
     Object.keys(data.markers || {}).forEach(function (k) {
@@ -287,7 +323,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       b.type = 'button'; b.dataset.k = k; b.dataset.i = i;
       b.setAttribute('aria-label', (m.name || m.id || 'Marker') + ' (' + groupName(g) + ')');
       var src = iconFor(g, m);
-      if (src) { var im = el('img'); im.src = src; im.alt = ''; im.draggable = false; b.appendChild(im); }
+      if (src) { var im = el('img'); im.src = src; im.alt = ''; im.draggable = false; im.onerror = function () { iconFailed(g, m); }; b.appendChild(im); }
       else { var d = el('span', 'dot'); d.style.setProperty('--c', hue(g)); b.appendChild(d); }
       if (names && m.name) b.appendChild(el('span', 'lab', m.name));
       place(b, m);
@@ -305,8 +341,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     ids.forEach(function (g) {
       var b = el('button', 'row' + (g === activeGroup ? ' on' : '')); b.type = 'button';
       b.setAttribute('aria-pressed', 'false');
-      var sw = el('span', 'sw'); sw.style.setProperty('--c', hue(g));
-      b.appendChild(sw); b.appendChild(el('span', 'nm', groupName(g))); b.appendChild(el('span', 'num', String(counts[g] || 0)));
+      b.appendChild(swatch(g)); b.appendChild(el('span', 'nm', groupName(g))); b.appendChild(el('span', 'num', String(counts[g] || 0)));
       b.addEventListener('click', function () { activeGroup = g; renderGroups(); });
       box.appendChild(b);
     });
@@ -319,8 +354,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     eachMarker(function (m, k, i) {
       n++;
       var p = getXY(m), b = el('button', 'row' + (sel && sel.k === k && sel.i === i ? ' on' : '')); b.type = 'button';
-      var sw = el('span', 'sw'); sw.style.setProperty('--c', hue(groupOf(k)));
-      b.appendChild(sw); b.appendChild(el('span', 'nm', m.name || String(m.id || '(unnamed)')));
+      b.appendChild(swatch(groupOf(k))); b.appendChild(el('span', 'nm', m.name || String(m.id || '(unnamed)')));
       b.appendChild(el('span', 'num', p.x + ', ' + p.y));
       b.addEventListener('click', function () {
         sel = { k: k, i: i }; render();
@@ -381,10 +415,28 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var url = URL.createObjectURL(file), probe = new Image();
     probe.onload = function () {
       aspect = probe.naturalWidth / probe.naturalHeight || 1;
-      bg.src = url; bg.hidden = false; renderHint(); layout(false);
+      bg.src = url; bg.hidden = false; bgFromFile = true; bgLoadedName = bgName(); renderHint(); layout(false);
       say('Background loaded: ' + file.name + ' (' + probe.naturalWidth + ' × ' + probe.naturalHeight + ' px).', 'ok');
     };
     probe.onerror = function () { say('That file could not be read as an image.', 'bad'); };
+    probe.src = url;
+  }
+  // The map's own background, straight from the wiki (skipped while a picked file is showing for this map).
+  function loadWikiBackground() {
+    var name = bgName();
+    if (!name || (name === bgLoadedName && !bg.hidden)) return;
+    if (bgFromFile && name === bgLoadedName) return;
+    var probe = new Image(), url = wikiFile(name);
+    probe.onload = function () {
+      if (bgName() !== name) return;
+      aspect = probe.naturalWidth / probe.naturalHeight || 1;
+      bg.src = url; bg.hidden = false; bgFromFile = false; bgLoadedName = name; renderHint(); layout(false);
+      say('Background loaded from the wiki: ' + name + ' (' + probe.naturalWidth + ' × ' + probe.naturalHeight + ' px).', 'ok');
+    };
+    probe.onerror = function () {
+      if (bgName() !== name) return;
+      say('Background “' + name + '” isn\'t on the wiki yet. Choose “Background image…” to load it from your computer.', 'bad');
+    };
     probe.src = url;
   }
   $('bgFile').addEventListener('change', function () { if (this.files[0]) setBackground(this.files[0]); this.value = ''; });
@@ -561,6 +613,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (!quiet) pushUndo();
     data = o; sel = null; activeGroup = null;
     render();
+    loadWikiBackground();
     if (!quiet) {
       var n = 0; eachMarker(function () { n++; });
       say('Loaded ' + n + ' marker' + (n === 1 ? '' : 's') + ' in ' + groupIds().length + ' groups.', 'ok');
@@ -578,7 +631,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   /* ---------- start ---------- */
   var draft = null;
   try { draft = localStorage.getItem('datamaps-editor-draft'); } catch (e) {}
-  if (!(draft && loadText(draft, true))) { data = SAMPLE; render(); }
+  if (!(draft && loadText(draft, true))) { data = SAMPLE; render(); loadWikiBackground(); }
   say(draft ? 'Restored the map you were last editing in this browser.' : 'Showing the TestTwo map. Paste different JSON below and press “Load pasted JSON” to switch maps.', '');
   layout(false);
   if (window.ResizeObserver) new ResizeObserver(function () { layout(true); }).observe(viewport.parentElement);
