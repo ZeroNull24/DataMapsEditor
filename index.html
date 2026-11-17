@@ -72,6 +72,8 @@ aside { display: flex; flex-direction: column; gap: 12px; min-width: 0 }
 .rows { display: flex; flex-direction: column; gap: 2px; max-height: 250px; overflow-y: auto }
 .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; border: 1px solid transparent; background: none; padding: 4px 6px; border-radius: 5px; white-space: normal }
 .row.on { background: var(--sunk); border-color: var(--line) }
+.row.extra:not(.on) { opacity: .62 }
+.note.more { margin: 8px 0 2px }
 .row .sw { width: 12px; height: 12px; border-radius: 50%; background: var(--c) }
 .row .sw.ic { width: 16px; height: 16px; border-radius: 0; background: none; display: inline-grid; place-items: center }
 .row .sw.ic img { width: 16px; height: 16px; object-fit: contain; max-width: none }
@@ -255,23 +257,72 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     Object.keys(data.markers || {}).forEach(function (k) { var g = groupOf(k); if (ids.indexOf(g) < 0) ids.push(g); });
     return ids;
   }
-  function groupName(g) { var d = (data.groups || {})[g]; return (d && d.name) || g; }
+
+  /* ---------- group library ---------- */
+  // Every group the wiki's maps use, so any map can get one it doesn't have yet. These match
+  // "AA Map Markers DataMap template.json"; add new standard groups here.
+  var LIBRARY = {
+    "amNamed": { "name": "Named", "icon": "MapIconNamed.png", "size": [128, 128] },
+    "amMerchant": { "name": "Merchant(s)", "icon": "MapIconMerchant.png", "size": [128, 128] },
+    "amBanker": { "name": "Banker", "icon": "MapIconBanker.png", "size": [128, 128] },
+    "amStable": { "name": "Stable Master", "icon": "MapIconStableMaster.png", "size": [128, 128] },
+    "amClassTrainer": { "name": "Class Trainer(s)", "icon": "MapIconClassTrainer.png", "size": [128, 128] },
+    "amTradeTrainer": { "name": "Tradeskill Trainer(s)", "icon": "MapIconTradeskillTrainer.png", "size": [128, 128] },
+    "amZone": { "name": "Zone", "icon": "MapIconZone.png", "size": [128, 128] },
+    "amNPC": { "name": "NPC(s)", "fillColor": "#facc15", "size": 12, "static": true, "strokeColor": "#111111", "strokeWidth": 2 },
+    "amMob": { "name": "Mob(s)", "fillColor": "#9ca3af", "size": 12, "static": true, "strokeColor": "#111111", "strokeWidth": 2 }
+  };
+  // Plus any other icon on the wiki named "MapIcon...": MapIconBossMob.png -> group "Boss Mob(s)" (amBossMob).
+  function loadWikiIconGroups() {
+    var url = WIKI + '/w/api.php?action=query&list=allimages&aiprefix=MapIcon&ailimit=500&format=json&formatversion=2&origin=*';
+    fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+      var used = {}, added = 0;
+      Object.keys(LIBRARY).forEach(function (g) { if (LIBRARY[g].icon) used[norm(LIBRARY[g].icon)] = 1; });
+      ((j.query && j.query.allimages) || []).forEach(function (f) {
+        var file = f.name || String(f.title || '').replace(/^File:/i, '');
+        if (!file || used[norm(file)]) return;
+        var stem = file.replace(/\.[^.]+$/, '').replace(/^MapIcon/i, '').replace(/[^A-Za-z0-9]+/g, ' ').trim();
+        if (!stem) return;
+        var words = stem.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+        var id = 'am' + words.replace(/\s+/g, '');
+        if (LIBRARY[id]) return;
+        LIBRARY[id] = { name: words + '(s)', icon: file, size: [128, 128] };
+        used[norm(file)] = 1; added++;
+      });
+      if (added) { renderGroups(); renderEditor(); }
+    }).catch(function () { /* wiki not reachable: the built-in list still works */ });
+  }
+  function groupDef(g) { return (data.groups || {})[g] || LIBRARY[g] || null; }
+  // Groups from the library this map doesn't have yet (skipping ones whose icon it already uses).
+  function moreGroupIds() {
+    var have = groupIds(), icons = {};
+    have.forEach(function (g) { var d = groupDef(g); if (d && d.icon) icons[norm(d.icon)] = 1; });
+    return Object.keys(LIBRARY).filter(function (g) {
+      return have.indexOf(g) < 0 && !(LIBRARY[g].icon && icons[norm(LIBRARY[g].icon)]);
+    });
+  }
+  // A marker is going into a group the map doesn't define yet: copy the definition in.
+  function ensureGroup(g) {
+    if (!data.groups || typeof data.groups !== 'object') data.groups = {};
+    if (!data.groups[g] && LIBRARY[g]) data.groups[g] = JSON.parse(JSON.stringify(LIBRARY[g]));
+  }
+  function groupName(g) { var d = groupDef(g); return (d && d.name) || g; }
   function hue(g) {
-    var d = (data.groups || {})[g];
+    var d = groupDef(g);
     if (d && typeof d.fillColor === 'string') return d.fillColor;          // the wiki's own dot colour
     if (d && Array.isArray(d.fillColor)) return 'rgb(' + d.fillColor.slice(0, 3).join(',') + ')';
     var i = groupIds().indexOf(g); return 'hsl(' + HUES[(i < 0 ? 0 : i) % HUES.length] + ' 72% 48%)';
   }
   function norm(s) { return String(s).replace(/^file:/i, '').replace(/_/g, ' ').trim().toLowerCase(); }
   function iconFor(g, m) {
-    var d = (data.groups || {})[g], name = (m && m.icon) || (d && d.icon);
+    var d = groupDef(g), name = (m && m.icon) || (d && d.icon);
     if (!name) return null;
     if (icons[norm(name)]) return icons[norm(name)];
     return badWikiFiles[norm(name)] ? null : wikiFile(name, 64);
   }
   // An icon the wiki doesn't have: remember it and draw a dot instead.
   function iconFailed(g, m) {
-    var d = (data.groups || {})[g], name = (m && m.icon) || (d && d.icon);
+    var d = groupDef(g), name = (m && m.icon) || (d && d.icon);
     if (name && !icons[norm(name)] && !badWikiFiles[norm(name)]) {
       badWikiFiles[norm(name)] = 1;
       say('Icon not found on the wiki: ' + name + '. Showing a dot instead (or pick the file with “Marker icons…”).', 'bad');
@@ -334,18 +385,23 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
 
   function renderGroups() {
     var box = $('groups'); box.textContent = '';
-    var ids = groupIds();
-    if (ids.indexOf(activeGroup) < 0) activeGroup = ids[0] || null;
+    var ids = groupIds(), more = moreGroupIds();
+    if (ids.indexOf(activeGroup) < 0 && more.indexOf(activeGroup) < 0) activeGroup = ids[0] || more[0] || null;
     var counts = {};
     eachMarker(function (m, k) { var g = groupOf(k); counts[g] = (counts[g] || 0) + 1; });
-    ids.forEach(function (g) {
-      var b = el('button', 'row' + (g === activeGroup ? ' on' : '')); b.type = 'button';
+    function row(g, extra) {
+      var b = el('button', 'row' + (extra ? ' extra' : '') + (g === activeGroup ? ' on' : '')); b.type = 'button';
       b.setAttribute('aria-pressed', 'false');
       b.appendChild(swatch(g)); b.appendChild(el('span', 'nm', groupName(g))); b.appendChild(el('span', 'num', String(counts[g] || 0)));
       b.addEventListener('click', function () { activeGroup = g; renderGroups(); });
       box.appendChild(b);
-    });
-    if (!ids.length) box.appendChild(el('p', 'note', 'This map has no groups yet. Add one in the JSON first.'));
+    }
+    ids.forEach(function (g) { row(g, false); });
+    if (!ids.length) box.appendChild(el('p', 'note', 'This map has no groups yet. Pick one below.'));
+    if (more.length) {
+      box.appendChild(el('p', 'note more', 'More groups (added to the map when you place a marker in one):'));
+      more.forEach(function (g) { row(g, true); });
+    }
   }
 
   function renderList() {
@@ -372,6 +428,12 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (!m) return;
     var p = getXY(m), gs = $('fGroup'); gs.textContent = '';
     groupIds().forEach(function (g) { var o = el('option', null, groupName(g)); o.value = g; gs.appendChild(o); });
+    var more = moreGroupIds();
+    if (more.length) {
+      var og = el('optgroup'); og.label = 'More groups';
+      more.forEach(function (g) { var o = el('option', null, groupName(g)); o.value = g; og.appendChild(o); });
+      gs.appendChild(og);
+    }
     gs.value = groupOf(sel.k);
     $('fName').value = m.name || '';
     $('fId').value = m.id == null ? '' : m.id;
@@ -477,6 +539,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function addAt(f) {
     if (!activeGroup) { say('Add a group to the JSON before placing markers.', 'bad'); return; }
     pushUndo();
+    ensureGroup(activeGroup);
     if (!data.markers || typeof data.markers !== 'object') data.markers = {};
     var key = activeGroup;
     if (!data.markers[key]) {
@@ -581,7 +644,10 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   $('fGroup').addEventListener('change', function () {
     var m = cur(); if (!m) return;
     var g = this.value;
+    pushUndo();
+    ensureGroup(g);
     data.markers[sel.k].splice(sel.i, 1);
+    if (!data.markers[sel.k].length) delete data.markers[sel.k];
     var key = Object.keys(data.markers).filter(function (k) { return k === g; })[0] ||
               Object.keys(data.markers).filter(function (k) { return groupOf(k) === g; })[0] || g;
     if (!data.markers[key]) data.markers[key] = [];
@@ -632,6 +698,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   var draft = null;
   try { draft = localStorage.getItem('datamaps-editor-draft'); } catch (e) {}
   if (!(draft && loadText(draft, true))) { data = SAMPLE; render(); loadWikiBackground(); }
+  loadWikiIconGroups();
   say(draft ? 'Restored the map you were last editing in this browser.' : 'Showing the TestTwo map. Paste different JSON below and press “Load pasted JSON” to switch maps.', '');
   layout(false);
   if (window.ResizeObserver) new ResizeObserver(function () { layout(true); }).observe(viewport.parentElement);
