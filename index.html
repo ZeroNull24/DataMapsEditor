@@ -88,6 +88,22 @@ aside { display: flex; flex-direction: column; gap: 12px; min-width: 0 }
 .form input.num { font-family: var(--mono) }
 .form textarea { resize: vertical; min-height: 54px }
 
+/* areas (mob spawn areas etc.): SVG shapes under the markers, corner handles on top */
+svg.areas { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible }
+svg.areas polygon, svg.areas polyline { vector-effect: non-scaling-stroke; stroke-width: 2; stroke-linejoin: round; cursor: move }
+svg.areas polygon { fill-opacity: .2 }
+svg.areas polygon.on { stroke-width: 3; fill-opacity: .3; stroke-dasharray: 6 3 }
+svg.areas polyline { fill: none; stroke-dasharray: 5 4; pointer-events: none }
+#handles { position: absolute; inset: 0; pointer-events: none }
+.ah, .am { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; touch-action: none }
+.ah { width: 12px; height: 12px; background: #fff; border: 2px solid var(--sel); border-radius: 2px; cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,.6) }
+.am { width: 14px; height: 14px; border-radius: 50%; background: rgba(255,255,255,.85); border: 1px solid var(--sel); cursor: copy;
+  font: 600 11px/12px var(--sans); color: #333; text-align: center }
+.alab { position: absolute; transform: translate(-50%, -50%); background: var(--map-label-bg); color: var(--map-label-fg); font-size: 11px;
+  line-height: 1.2; padding: 2px 6px; border-radius: 3px; white-space: nowrap; pointer-events: none; opacity: .9 }
+.stage.drawing { cursor: crosshair }
+.areabtns { display: flex; flex-wrap: wrap; gap: 6px }
+
 .jsonhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
 .jsonhead .sep { flex: 1 1 0 }
 #status { font-size: 13px; color: var(--muted); min-height: 1.4em }
@@ -107,6 +123,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     <label class="btn">Background image…<input type="file" id="bgFile" accept="image/*"></label>
     <label class="btn">Marker icons…<input type="file" id="iconFiles" accept="image/*" multiple></label>
     <button id="addBtn" aria-pressed="false" type="button">+ Add marker</button>
+    <button id="drawBtn" aria-pressed="false" type="button" title="Click the map to place corners; click the first corner, press Enter or “Finish shape” to close it">+ Draw area</button>
     <button id="undoBtn" type="button" disabled>Undo</button>
     <label class="chk"><input type="checkbox" id="showNames" checked> Show names</label>
     <span class="sep"></span>
@@ -119,7 +136,9 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       <div class="stage" id="stage">
         <img class="bg" id="bg" alt="" hidden>
         <div class="hint" id="hint"><div id="hintText"></div></div>
+        <svg class="areas" id="areaSvg" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
         <div id="layer"></div>
+        <div id="handles"></div>
       </div>
     </div>
 
@@ -144,7 +163,24 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
           <label>Y<input id="fY" class="num" type="number" step="0.01"></label>
           <label class="wide">Description (one line per entry)<textarea id="fDesc"></textarea></label>
           <label class="wide">Article link (page title, optional)<input id="fArticle" type="text" placeholder="Map:Test"></label>
-          <div class="wide"><button class="danger" id="delBtn" type="button">Delete marker</button></div>
+          <div class="wide areabtns"><button class="danger" id="delBtn" type="button">Delete marker</button>
+            <button id="toAreaBtn" type="button" title="Make a shaded area around this marker (with its name, group and page), to reshape on the map">Turn into area</button></div>
+        </div>
+      </div>
+      <div class="card" id="areaCard">
+        <h2 id="areaTitle">Areas</h2>
+        <p class="note">Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.</p>
+        <div class="rows" id="areaList"></div>
+        <div class="form" id="aForm" hidden>
+          <label class="wide">Name<input id="aName" type="text"></label>
+          <label>Group<select id="aGroup"></select></label>
+          <label>Colour (optional)<input id="aColor" type="text" placeholder="group colour"></label>
+          <label class="wide">Article link (page title, optional)<input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
+          <p class="note wide" id="aHelp">Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.</p>
+          <div class="wide areabtns">
+            <button id="finishBtn" class="primary" type="button" hidden>Finish shape</button>
+            <button class="danger" id="aDelBtn" type="button">Delete area</button>
+          </div>
         </div>
       </div>
     </aside>
@@ -352,13 +388,14 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function allIds() { var s = {}; eachMarker(function (m) { if (m.id != null) s[m.id] = 1; }); return s; }
 
   /* ---------- undo ---------- */
-  function snap() { return JSON.stringify({ d: data, s: sel }); }
+  var selA = null, drawing = false;      // selected area (index into custom.areas), drawing a new one
+  function snap() { return JSON.stringify({ d: data, s: sel, a: selA }); }
   function pushUndo() { var s = snap(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 200) undo.shift(); $('undoBtn').disabled = false; }
   function doUndo() {
     var now = snap();
     while (undo.length) {
       var s = undo.pop();
-      if (s !== now) { var o = JSON.parse(s); data = o.d; sel = o.s; break; }
+      if (s !== now) { var o = JSON.parse(s); data = o.d; sel = o.s; selA = o.a == null ? null : o.a; break; }
     }
     $('undoBtn').disabled = !undo.length;
     render();
@@ -415,7 +452,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       b.appendChild(swatch(groupOf(k))); b.appendChild(el('span', 'nm', m.name || String(m.id || '(unnamed)')));
       b.appendChild(el('span', 'num', p.x + ', ' + p.y));
       b.addEventListener('click', function () {
-        sel = { k: k, i: i }; render();
+        sel = { k: k, i: i }; selA = null; render();
         var me = markerEl(); if (me) { me.scrollIntoView({ block: 'nearest', inline: 'nearest' }); me.focus({ preventScroll: true }); }
       });
       box.appendChild(b);
@@ -453,7 +490,102 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var n = bgName();
     $('hintText').textContent = 'No background loaded. Choose “Background image…” and pick ' + (n ? n : 'the map image') + ', or drop it here.';
   }
-  function render() { renderGroups(); renderList(); renderMarkers(); renderEditor(); renderHint(); writeJSON(); }
+  /* ---------- areas: "custom": { "areas": [ { name, group, article, color, points: [[y, x], ...] } ] } ---------- */
+  function areaList(create) {
+    if (create) {
+      if (!data.custom || typeof data.custom !== 'object' || Array.isArray(data.custom)) data.custom = {};
+      if (!Array.isArray(data.custom.areas)) data.custom.areas = [];
+    }
+    return (data.custom && Array.isArray(data.custom.areas)) ? data.custom.areas : [];
+  }
+  function curA() { var l = areaList(); return selA != null && l[selA] ? l[selA] : null; }
+  function ptFrac(p) { return toFrac({ x: Number(p[1]), y: Number(p[0]) }); }   // area points are [y, x]
+  function fracPt(fx, fy) { var q = fromFrac(clamp(fx), clamp(fy)); return [q.y, q.x]; }
+  function areaColour(a) {
+    if (a.color) return a.color;
+    var d = groupDef(a.group);
+    if (d && typeof d.fillColor === 'string') return d.fillColor;
+    return '#e53935';
+  }
+  function areaName(a, i) { return a.name || ('Area ' + (i + 1)); }
+  function tidyAreas() {
+    var l = areaList();
+    if (data.custom && Array.isArray(data.custom.areas) && !l.length) delete data.custom.areas;
+    if (data.custom && typeof data.custom === 'object' && !Object.keys(data.custom).length) delete data.custom;
+  }
+
+  function renderAreas() {
+    var svg = $('areaSvg'), hd = $('handles'), l = areaList(), ns = 'http://www.w3.org/2000/svg';
+    svg.textContent = ''; hd.textContent = '';
+    if (selA != null && !l[selA]) selA = null;
+    var names = $('showNames').checked;
+    l.forEach(function (a, i) {
+      var pts = (a.points || []).map(ptFrac);
+      if (!pts.length) return;
+      var str = pts.map(function (f) { return (f.fx * 1000).toFixed(1) + ',' + (f.fy * 1000).toFixed(1); }).join(' ');
+      var open = drawing && i === selA, shape = document.createElementNS(ns, open || pts.length < 3 ? 'polyline' : 'polygon');
+      shape.setAttribute('points', str);
+      shape.setAttribute('stroke', areaColour(a)); shape.setAttribute('fill', areaColour(a));
+      shape.setAttribute('data-a', i);
+      if (i === selA) shape.setAttribute('class', 'on');
+      svg.appendChild(shape);
+      if (names && pts.length >= 3 && !open) {
+        var cx = 0, cy = 0; pts.forEach(function (f) { cx += f.fx; cy += f.fy; });
+        var lab = el('div', 'alab', areaName(a, i)); lab.style.left = (cx / pts.length * 100) + '%'; lab.style.top = (cy / pts.length * 100) + '%';
+        hd.appendChild(lab);
+      }
+      if (i !== selA) return;
+      // corner handles, and a "+" in the middle of each edge to add a corner there
+      pts.forEach(function (f, c) {
+        var h = el('div', 'ah'); h.dataset.c = c; h.title = 'Drag to move' + (pts.length > 3 ? ' · Shift+click to remove' : '');
+        h.style.left = (f.fx * 100) + '%'; h.style.top = (f.fy * 100) + '%'; hd.appendChild(h);
+      });
+      if (!open && pts.length >= 3) pts.forEach(function (f, c) {
+        var g = pts[(c + 1) % pts.length], m = el('div', 'am', '+'); m.dataset.c = c + 1; m.title = 'Add a corner here';
+        m.style.left = ((f.fx + g.fx) / 2 * 100) + '%'; m.style.top = ((f.fy + g.fy) / 2 * 100) + '%'; hd.appendChild(m);
+      });
+    });
+  }
+  function fillGroupSelect(gs, value) {
+    gs.textContent = '';
+    groupIds().forEach(function (g) { var o = el('option', null, groupName(g)); o.value = g; gs.appendChild(o); });
+    var more = moreGroupIds();
+    if (more.length) {
+      var og = el('optgroup'); og.label = 'More groups';
+      more.forEach(function (g) { var o = el('option', null, groupName(g)); o.value = g; og.appendChild(o); });
+      gs.appendChild(og);
+    }
+    if (value && !Array.prototype.some.call(gs.options, function (o) { return o.value === value; })) {
+      var o = el('option', null, value); o.value = value; gs.appendChild(o);
+    }
+    gs.value = value || '';
+  }
+  function renderAreaPanel() {
+    var box = $('areaList'), l = areaList(); box.textContent = '';
+    l.forEach(function (a, i) {
+      var b = el('button', 'row' + (i === selA ? ' on' : '')); b.type = 'button';
+      var sw = el('span', 'sw'); sw.style.setProperty('--c', areaColour(a)); sw.style.borderRadius = '3px';
+      b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i)));
+      b.appendChild(el('span', 'num', (a.points || []).length + ' corners'));
+      b.addEventListener('click', function () { if (drawing) finishDraw(); selA = i; sel = null; render(); });
+      box.appendChild(b);
+    });
+    $('areaTitle').textContent = 'Areas (' + l.length + ')';
+    if (!l.length) box.appendChild(el('p', 'note', 'No areas on this map yet.'));
+    var a = curA();
+    $('aForm').hidden = !a;
+    if (!a) return;
+    $('aName').value = a.name || '';
+    fillGroupSelect($('aGroup'), a.group || '');
+    $('aColor').value = a.color || '';
+    $('aArticle').value = a.article || '';
+    $('finishBtn').hidden = !drawing;
+    $('aHelp').textContent = drawing
+      ? 'Click the map to add corners. Click the first corner, press Enter or “Finish shape” when done (3 or more corners).'
+      : 'Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.';
+  }
+
+  function render() { renderGroups(); renderList(); renderMarkers(); renderAreas(); renderAreaPanel(); renderEditor(); renderHint(); writeJSON(); }
   function say(msg, cls) { var s = $('status'); s.textContent = msg; s.className = cls || ''; }
 
   /* ---------- sizing and zoom ---------- */
@@ -537,7 +669,62 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     $('fX').value = p.x; $('fY').value = p.y;
     showXY(p);
   }
-  function setAdd(on) { addMode = on; $('addBtn').setAttribute('aria-pressed', String(on)); stage.classList.toggle('adding', on); }
+  function setAdd(on) {
+    if (on && drawing) finishDraw();
+    addMode = on; $('addBtn').setAttribute('aria-pressed', String(on)); stage.classList.toggle('adding', on);
+  }
+
+  /* ---------- drawing and editing areas ---------- */
+  function setDraw(on) {
+    if (on) {
+      if (addMode) setAdd(false);
+      pushUndo();
+      var l = areaList(true), g = groupDef('amMob') ? 'amMob' : (activeGroup || groupIds()[0] || 'amMob');   // areas are mostly mob spawns
+      ensureGroup(g);
+      l.push({ name: 'New area', group: g, points: [] });
+      selA = l.length - 1; sel = null; drawing = true;
+      say('Click the map to place the corners of the area.', '');
+    } else drawing = false;
+    $('drawBtn').setAttribute('aria-pressed', String(drawing));
+    stage.classList.toggle('drawing', drawing);
+    render();
+  }
+  function finishDraw() {
+    var a = curA(), l = areaList();
+    drawing = false;
+    $('drawBtn').setAttribute('aria-pressed', 'false'); stage.classList.remove('drawing');
+    if (a && (a.points || []).length < 3) {
+      l.splice(selA, 1); selA = null; tidyAreas();
+      say('Area removed: it needs at least 3 corners.', 'bad');
+    } else if (a) {
+      say('Area finished. Name it and pick its group on the right.', 'ok');
+      setTimeout(function () { $('aName').focus(); $('aName').select(); }, 0);
+    }
+    render();
+  }
+  function addCorner(f) {
+    var a = curA(); if (!a) return;
+    if (!Array.isArray(a.points)) a.points = [];
+    a.points.push(fracPt(f.fx, f.fy));
+    renderAreas(); renderAreaPanel(); writeJSON();
+  }
+  // A marker becomes an area: an eight-cornered shape around it with its name, group and page (the marker stays).
+  function markerToArea() {
+    var m = cur(); if (!m) return;
+    pushUndo();
+    var g = groupOf(sel.k), f = toFrac(m), r = 0.035, pts = [];
+    for (var k = 0; k < 8; k++) {
+      var t = Math.PI * 2 * k / 8 + Math.PI / 8;
+      // r is a share of the picture's width; heights are scaled by its shape so the octagon is even on screen
+      pts.push(fracPt(f.fx + r * Math.cos(t), f.fy + r * Math.sin(t) * aspect));
+    }
+    var a = { name: m.name || 'Area', group: g, points: pts };
+    if (m.article) a.article = m.article;
+    var l = areaList(true); l.push(a);
+    selA = l.length - 1; sel = null;
+    render();
+    say('Area made around “' + (m.name || 'the marker') + '”. Drag its corners to fit; the marker stays as its label.', 'ok');
+  }
   function addAt(f) {
     if (!activeGroup) { say('Add a group to the JSON before placing markers.', 'bad'); return; }
     pushUndo();
@@ -559,14 +746,51 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
 
   stage.addEventListener('pointerdown', function (e) {
     if (e.button) return;
-    var b = e.target.closest ? e.target.closest('.mk') : null;
+    var t = e.target, f0 = fracAt(e);
+    var corner = t.closest ? t.closest('.ah') : null, mid = t.closest ? t.closest('.am') : null;
+    var a0 = curA();
+    if (corner && a0) {
+      e.preventDefault();
+      var c = Number(corner.dataset.c);
+      if (drawing && c === 0 && a0.points.length >= 3) { finishDraw(); return; }
+      if (e.shiftKey && !drawing) {
+        if (a0.points.length > 3) { pushUndo(); a0.points.splice(c, 1); render(); }
+        else say('An area needs at least 3 corners.', 'bad');
+        return;
+      }
+      drag = { kind: 'corner', c: c, id: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
+    if (mid && a0) {
+      e.preventDefault(); pushUndo();
+      var at = Number(mid.dataset.c);
+      a0.points.splice(at, 0, fracPt(f0.fx, f0.fy));
+      render();
+      drag = { kind: 'corner', c: at, id: e.pointerId, sx: e.clientX, sy: e.clientY, moved: true };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
+    if (drawing) { e.preventDefault(); addCorner(f0); return; }
+    var shape = t.closest ? t.closest('[data-a]') : null;
+    if (shape && !(t.closest && t.closest('.mk'))) {
+      e.preventDefault();
+      selA = Number(shape.getAttribute('data-a')); sel = null; render();
+      var a1 = curA();
+      drag = { kind: 'area', id: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false, f0: f0,
+               orig: (a1.points || []).map(function (p) { return ptFrac(p); }) };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
+    var b = t.closest ? t.closest('.mk') : null;
     if (b) {
       e.preventDefault();
+      selA = null; renderAreas(); renderAreaPanel();
       sel = { k: b.dataset.k, i: Number(b.dataset.i) };
       renderList(); renderMarkers(); renderEditor();
       var me = markerEl(); if (me) me.focus({ preventScroll: true });
       var f = fracAt(e), mf = toFrac(cur());
-      drag = { id: e.pointerId, ox: f.fx - mf.fx, oy: f.fy - mf.fy, sx: e.clientX, sy: e.clientY, moved: false };
+      drag = { kind: 'marker', id: e.pointerId, ox: f.fx - mf.fx, oy: f.fy - mf.fy, sx: e.clientX, sy: e.clientY, moved: false };
       try { stage.setPointerCapture(e.pointerId); } catch (err) {}
     } else if (addMode) {
       e.preventDefault(); addAt(fracAt(e));
@@ -579,13 +803,18 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
         if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 3) return;
         drag.moved = true; pushUndo();
       }
-      moveSel(f.fx - drag.ox, f.fy - drag.oy);
+      if (drag.kind === 'corner') {
+        var ac = curA(); if (ac) { ac.points[drag.c] = fracPt(f.fx, f.fy); renderAreas(); }
+      } else if (drag.kind === 'area') {
+        var aa = curA(), dx = f.fx - drag.f0.fx, dy = f.fy - drag.f0.fy;
+        if (aa) { aa.points = drag.orig.map(function (q) { return fracPt(q.fx + dx, q.fy + dy); }); renderAreas(); }
+      } else moveSel(f.fx - drag.ox, f.fy - drag.oy);
     } else if (f.fx >= 0 && f.fx <= 1 && f.fy >= 0 && f.fy <= 1) showXY(fromFrac(f.fx, f.fy));
   });
   function endDrag(e) {
     if (!drag || drag.id !== e.pointerId) return;
     var moved = drag.moved; drag = null;
-    if (moved) { renderList(); writeJSON(); }
+    if (moved) { renderList(); renderAreas(); renderAreaPanel(); writeJSON(); }
   }
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
@@ -597,6 +826,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     sel = null; render();
   }
   stage.addEventListener('keydown', function (e) {
+    if (!cur() && curA() && !drawing && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); removeArea(); return; }
     if (!cur()) return;
     var step = e.shiftKey ? 1 : 0.1, dx = 0, dy = 0;
     if (e.key === 'ArrowLeft') dx = -step; else if (e.key === 'ArrowRight') dx = step;
@@ -610,6 +840,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && addMode) setAdd(false);
+    if (drawing && (e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); finishDraw(); return; }
     var t = e.target, typing = t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
     if (!typing && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); doUndo(); }
   });
@@ -617,8 +848,28 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   /* ---------- toolbar ---------- */
   $('addBtn').addEventListener('click', function () { setAdd(!addMode); });
   $('undoBtn').addEventListener('click', doUndo);
-  $('showNames').addEventListener('change', renderMarkers);
+  $('showNames').addEventListener('change', function () { renderMarkers(); renderAreas(); });
   $('delBtn').addEventListener('click', removeSel);
+  $('drawBtn').addEventListener('click', function () { if (drawing) finishDraw(); else setDraw(true); });
+  $('finishBtn').addEventListener('click', finishDraw);
+  $('toAreaBtn').addEventListener('click', markerToArea);
+  function removeArea() {
+    var l = areaList(); if (selA == null || !l[selA]) return;
+    pushUndo(); l.splice(selA, 1); selA = null; drawing = false;
+    $('drawBtn').setAttribute('aria-pressed', 'false'); stage.classList.remove('drawing');
+    tidyAreas(); render();
+  }
+  $('aDelBtn').addEventListener('click', removeArea);
+  $('aForm').addEventListener('focusin', pushUndo);
+  function areaField(key, val) {
+    var a = curA(); if (!a) return;
+    if (val === '' || val == null) delete a[key]; else a[key] = val;
+    renderAreas(); renderAreaPanel(); writeJSON();
+  }
+  $('aName').addEventListener('input', function () { areaField('name', this.value); });
+  $('aArticle').addEventListener('input', function () { areaField('article', this.value.trim()); });
+  $('aColor').addEventListener('input', function () { areaField('color', this.value.trim()); });
+  $('aGroup').addEventListener('change', function () { ensureGroup(this.value); areaField('group', this.value); renderGroups(); });
 
   /* ---------- editor fields ---------- */
   function setOrDrop(m, key, val) { if (val === '' || val == null) delete m[key]; else m[key] = val; }
@@ -679,7 +930,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var err = check(o);
     if (err) { if (!quiet) say('Not loaded. ' + err, 'bad'); return false; }
     if (!quiet) pushUndo();
-    data = o; sel = null; activeGroup = null;
+    data = o; sel = null; selA = null; activeGroup = null; drawing = false;
+    $('drawBtn').setAttribute('aria-pressed', 'false'); stage.classList.remove('drawing');
     render();
     loadWikiBackground();
     if (!quiet) {
