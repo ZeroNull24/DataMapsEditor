@@ -34,6 +34,7 @@ h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacin
 button, .btn, input, select, textarea { font: inherit; color: inherit }
 button, .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap }
 button:hover, .btn:hover { border-color: var(--accent) }
+a.btn { text-decoration: none }
 button:disabled { opacity: .45; cursor: default }
 button.primary, button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg) }
 button.danger { color: var(--bad) }
@@ -155,6 +156,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       <span class="sep"></span>
       <button id="loadBtn" type="button">Load pasted JSON</button>
       <button id="copyBtn" class="primary" type="button">Copy JSON</button>
+      <a id="wikiEdit" class="btn" target="_blank" rel="noopener" hidden>Paste on wiki ↗</a>
     </div>
     <div id="status" role="status"></div>
     <textarea id="json" spellcheck="false" aria-label="Map JSON"></textarea>
@@ -686,7 +688,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     }
     return true;
   }
-  $('loadBtn').addEventListener('click', function () { loadText(ta.value, false); });
+  $('loadBtn').addEventListener('click', function () { if (loadText(ta.value, false)) showWikiEdit(''); });
   ta.addEventListener('input', function () { say('Text changed. Press “Load pasted JSON” to show it on the map.', ''); });
   $('copyBtn').addEventListener('click', function () {
     var done = function () { say('Copied. Paste it into the map page on the wiki and save.', 'ok'); };
@@ -694,12 +696,40 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     try { navigator.clipboard.writeText(ta.value).then(done, manual); } catch (e) { manual(); }
   });
 
+  /* ---------- open a map straight from the wiki ---------- */
+  // Links like  ...?map=Map:TestTwo  or  ...?pageid=1234  (the wiki's "Open in Marker Editor" link)
+  // load that Map: page's current JSON from the wiki.
+  function showWikiEdit(title) {
+    var a = $('wikiEdit');
+    if (!title) { a.hidden = true; return; }
+    a.href = WIKI + '/wiki/' + encodeURIComponent(title.replace(/ /g, '_')).replace(/%3A/g, ':').replace(/%2F/g, '/') + '?action=edit';
+    a.title = 'Open ' + title + ' for editing on the wiki (copy the JSON first)';
+    a.hidden = false;
+  }
+  function loadFromWiki(title, pageid) {
+    var q = WIKI + '/w/api.php?action=query&prop=revisions&rvprop=content&rvslots=main&format=json&formatversion=2&origin=*' +
+      (pageid ? '&pageids=' + encodeURIComponent(pageid) : '&titles=' + encodeURIComponent(title));
+    say('Loading ' + (title || 'the map') + ' from the wiki…', '');
+    fetch(q).then(function (r) { return r.json(); }).then(function (j) {
+      var pg = j.query && j.query.pages && j.query.pages[0];
+      var rev = pg && pg.revisions && pg.revisions[0];
+      var text = rev && rev.slots && rev.slots.main && rev.slots.main.content;
+      if (!pg || pg.missing || !text) { say('Couldn\'t find ' + (title || ('page ' + pageid)) + ' on the wiki.', 'bad'); return; }
+      if (loadText(text, false)) {
+        showWikiEdit(pg.title);
+        say('Loaded ' + pg.title + ' from the wiki. When you\'re done: Copy JSON, then “Paste on wiki”.', 'ok');
+      }
+    }).catch(function () { say('Couldn\'t reach the wiki to load ' + (title || 'the map') + '.', 'bad'); });
+  }
+
   /* ---------- start ---------- */
-  var draft = null;
+  var draft = null, params = new URLSearchParams(location.search);
+  var wantTitle = params.get('map'), wantId = params.get('pageid');
   try { draft = localStorage.getItem('datamaps-editor-draft'); } catch (e) {}
   if (!(draft && loadText(draft, true))) { data = SAMPLE; render(); loadWikiBackground(); }
   loadWikiIconGroups();
-  say(draft ? 'Restored the map you were last editing in this browser.' : 'Showing the TestTwo map. Paste different JSON below and press “Load pasted JSON” to switch maps.', '');
+  if (wantTitle || wantId) loadFromWiki(wantTitle, wantId);
+  else say(draft ? 'Restored the map you were last editing in this browser.' : 'Showing the TestTwo map. Paste different JSON below and press “Load pasted JSON” to switch maps.', '');
   layout(false);
   if (window.ResizeObserver) new ResizeObserver(function () { layout(true); }).observe(viewport.parentElement);
 })();
