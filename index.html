@@ -101,8 +101,8 @@ svg.areas polyline { fill: none; stroke-dasharray: 5 4; pointer-events: none }
 .ah { width: 12px; height: 12px; background: #fff; border: 2px solid var(--sel); border-radius: 2px; cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,.6) }
 .am { width: 14px; height: 14px; border-radius: 50%; background: rgba(255,255,255,.85); border: 1px solid var(--sel); cursor: copy;
   font: 600 11px/12px var(--sans); color: #333; text-align: center }
-.alab { position: absolute; transform: translate(-50%, -50%); background: var(--map-label-bg); color: var(--map-label-fg); font-size: 11px;
-  line-height: 1.2; padding: 2px 6px; border-radius: 3px; white-space: nowrap; pointer-events: none; opacity: .9 }
+.alab { text-align: center; position: absolute; transform: translate(-50%, -50%); background: var(--map-label-bg); color: var(--map-label-fg); font-size: 11px;
+  line-height: 1.2; padding: 2px 6px; border-radius: 3px; white-space: pre; pointer-events: none; opacity: .9 }
 .stage.drawing { cursor: crosshair }
 .areabtns { display: flex; flex-wrap: wrap; gap: 6px }
 
@@ -179,6 +179,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
           <label>Group<select id="aGroup"></select></label>
           <label>Colour (optional)<input id="aColor" type="text" placeholder="group colour"></label>
           <label class="wide">Article link (page title, optional)<input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
+          <label class="wide">More mobs in this area (one per line)<textarea id="aMobs" rows="3" placeholder="a skeletal excavator&#10;a filthy rat | NPC:A filthy rat (sewers)"></textarea></label>
+          <p class="note wide">Each one links to NPC:<em>its name</em>; add “| page” after a name to link another page.</p>
           <p class="note wide" id="aHelp">Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.</p>
           <div class="wide areabtns">
             <button id="finishBtn" class="primary" type="button" hidden>Finish shape</button>
@@ -512,6 +514,14 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     return '#e53935';
   }
   function areaName(a, i) { return a.name || ('Area ' + (i + 1)); }
+  function areaMobs(a) { return Array.isArray(a.mobs) ? a.mobs.filter(function (m) { return m && m.name; }) : []; }
+  // On the map: every mob in the area, one per line
+  function areaNames(a, i) { return [areaName(a, i)].concat(areaMobs(a).map(function (m) { return m.name; })).join('\n'); }
+  function mobsText(a) {
+    return areaMobs(a).map(function (m) {
+      return m.article && m.article !== 'NPC:' + m.name ? m.name + ' | ' + m.article : m.name;
+    }).join('\n');
+  }
   function tidyAreas() {
     var l = areaList();
     if (data.custom && Array.isArray(data.custom.areas) && !l.length) delete data.custom.areas;
@@ -535,7 +545,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       svg.appendChild(shape);
       if (names && pts.length >= 3 && !open) {
         var cx = 0, cy = 0; pts.forEach(function (f) { cx += f.fx; cy += f.fy; });
-        var lab = el('div', 'alab', areaName(a, i)); lab.style.left = (cx / pts.length * 100) + '%'; lab.style.top = (cy / pts.length * 100) + '%';
+        var lab = el('div', 'alab', areaNames(a, i)); lab.style.left = (cx / pts.length * 100) + '%'; lab.style.top = (cy / pts.length * 100) + '%';
         hd.appendChild(lab);
       }
       if (i !== selA) return;
@@ -569,7 +579,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     l.forEach(function (a, i) {
       var b = el('button', 'row' + (i === selA ? ' on' : '')); b.type = 'button';
       var sw = el('span', 'sw'); sw.style.setProperty('--c', areaColour(a)); sw.style.borderRadius = '3px';
-      b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i)));
+      b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i) + (areaMobs(a).length ? ' + ' + areaMobs(a).length + ' more' : '')));
       b.appendChild(el('span', 'num', (a.points || []).length + ' corners'));
       b.addEventListener('click', function () { if (drawing) finishDraw(); selA = i; sel = null; render(); });
       box.appendChild(b);
@@ -583,6 +593,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     fillGroupSelect($('aGroup'), a.group || '');
     $('aColor').value = a.color || '';
     $('aArticle').value = a.article || '';
+    if (document.activeElement !== $('aMobs')) $('aMobs').value = mobsText(a);
     $('finishBtn').hidden = !drawing;
     $('aHelp').textContent = drawing
       ? 'Click the map to add corners. Click the first corner, press Enter or “Finish shape” when done (3 or more corners).'
@@ -913,6 +924,13 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   $('aName').addEventListener('input', function () { areaField('name', this.value); });
   $('aArticle').addEventListener('input', function () { areaField('article', this.value.trim()); });
   $('aColor').addEventListener('input', function () { areaField('color', this.value.trim()); });
+  $('aMobs').addEventListener('input', function () {
+    var list = this.value.split('\n').map(function (line) {
+      var parts = line.split('|'), name = parts[0].trim(), page = (parts[1] || '').trim();
+      return name ? { name: name, article: page || 'NPC:' + name } : null;
+    }).filter(Boolean);
+    areaField('mobs', list.length ? list : null);
+  });
   $('aGroup').addEventListener('change', function () { ensureGroup(this.value); areaField('group', this.value); renderGroups(); });
 
   /* ---------- editor fields ---------- */
