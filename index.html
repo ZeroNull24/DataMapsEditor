@@ -47,6 +47,8 @@ input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0 }
 .chk { display: inline-flex; align-items: center; gap: 6px }
 .zoom { display: inline-flex; align-items: center; gap: 6px; color: var(--muted) }
 .zoom input { width: 110px }
+#zoomVal { min-width: 3.2em; font-variant-numeric: tabular-nums }
+.viewport.panning, .viewport.panning * { cursor: grabbing !important }
 .readout { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 17ch }
 
 .work { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start }
@@ -127,7 +129,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     <button id="undoBtn" type="button" disabled>Undo</button>
     <label class="chk"><input type="checkbox" id="showNames" checked> Show names</label>
     <span class="sep"></span>
-    <label class="zoom">Zoom <input type="range" id="zoom" min="1" max="6" step="0.25" value="1"></label>
+    <label class="zoom" title="Mouse wheel over the map zooms where the pointer is; drag an empty spot to move around">Zoom <input type="range" id="zoom" min="1" max="16" step="0.25" value="1"> <span id="zoomVal">1×</span></label>
+    <button id="fitBtn" type="button" title="Zoom out to fit the whole map">Fit</button>
     <span class="readout" id="readout" aria-live="off">x –, y –</span>
   </div>
 
@@ -604,7 +607,47 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       viewport.scrollTop = cy * stage.offsetHeight - viewport.clientHeight / 2;
     }
   }
-  $('zoom').addEventListener('input', function () { zoom = Number(this.value) || 1; layout(true); });
+  // Zoom so the spot under (clientX, clientY) stays put; no point = keep the middle of the view.
+  function setZoom(z, clientX, clientY) {
+    z = Math.max(1, Math.min(16, Math.round(z * 100) / 100));
+    if (z === zoom) return;
+    if (clientX == null) { zoom = z; layout(true); }
+    else {
+      var r = stage.getBoundingClientRect(), v = viewport.getBoundingClientRect();
+      var fx = (clientX - r.left) / r.width, fy = (clientY - r.top) / r.height;
+      zoom = z; layout(false);
+      viewport.scrollLeft = fx * stage.offsetWidth - (clientX - v.left);
+      viewport.scrollTop = fy * stage.offsetHeight - (clientY - v.top);
+    }
+    $('zoom').value = zoom;
+    $('zoomVal').textContent = (zoom % 1 ? zoom.toFixed(2).replace(/0$/, '') : zoom) + '×';
+  }
+  $('zoom').addEventListener('input', function () { setZoom(Number(this.value) || 1); });
+  $('fitBtn').addEventListener('click', function () { setZoom(1); });
+  // Mouse wheel / trackpad pinch over the map: zoom in and out where the pointer is.
+  viewport.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var step = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    setZoom(zoom * Math.exp(-step * 0.0015), e.clientX, e.clientY);
+  }, { passive: false });
+  // Drag an empty spot (or hold the middle button anywhere) to move around a zoomed-in map.
+  var pan = null;
+  viewport.addEventListener('pointerdown', function (e) {
+    var t = e.target, onThing = t.closest && (t.closest('.mk') || t.closest('[data-a]') || t.closest('.ah') || t.closest('.am'));
+    if (!(e.button === 1 || (e.button === 0 && !onThing && !addMode && !drawing))) return;
+    pan = { id: e.pointerId, x: e.clientX, y: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop };
+    if (e.button === 1) e.preventDefault();
+    try { viewport.setPointerCapture(e.pointerId); } catch (err) {}
+    viewport.classList.add('panning');
+  });
+  viewport.addEventListener('pointermove', function (e) {
+    if (!pan || pan.id !== e.pointerId) return;
+    viewport.scrollLeft = pan.sl - (e.clientX - pan.x);
+    viewport.scrollTop = pan.st - (e.clientY - pan.y);
+  });
+  function endPan(e) { if (pan && pan.id === e.pointerId) { pan = null; viewport.classList.remove('panning'); } }
+  viewport.addEventListener('pointerup', endPan);
+  viewport.addEventListener('pointercancel', endPan);
   window.addEventListener('resize', function () { layout(true); });
 
   /* ---------- images ---------- */
