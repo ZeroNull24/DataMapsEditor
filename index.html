@@ -104,6 +104,13 @@ svg.areas polyline { fill: none; stroke-dasharray: 5 4; pointer-events: none }
 .alab { text-align: center; position: absolute; transform: translate(-50%, -50%); background: var(--map-label-bg); color: var(--map-label-fg); font-size: 11px;
   line-height: 1.2; padding: 2px 6px; border-radius: 3px; white-space: pre; pointer-events: none; opacity: .9 }
 .stage.drawing { cursor: crosshair }
+svg.areas polygon.other { fill-opacity: .08; stroke-dasharray: 3 3; pointer-events: none; opacity: .6 }
+.zlab { pointer-events: auto; cursor: grab; touch-action: none; outline: 2px dashed var(--sel); outline-offset: 2px }
+.kinds { display: flex; gap: 0; margin: 0 0 8px }
+.kinds button { flex: 1 1 0; border-radius: 0 }
+.kinds button:first-child { border-radius: 6px 0 0 6px }
+.kinds button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px }
+.kinds button[aria-pressed="true"] { background: var(--sel); color: #fff; border-color: var(--sel) }
 .areabtns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
 .areabtns .tol { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px }
 .areabtns .tol input { width: 64px }
@@ -174,15 +181,21 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       </div>
       <div class="card" id="areaCard">
         <h2 id="areaTitle">Areas</h2>
-        <p class="note">Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.</p>
+        <div class="kinds" role="group" aria-label="Kind of shape">
+          <button id="kindAreas" type="button" aria-pressed="true">Mob areas</button>
+          <button id="kindLinks" type="button" aria-pressed="false">Zone links</button>
+        </div>
+        <p class="note" id="kindNote">Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.</p>
         <div class="rows" id="areaList"></div>
         <div class="form" id="aForm" hidden>
           <label class="wide">Name<input id="aName" type="text"></label>
-          <label>Group<select id="aGroup"></select></label>
+          <label class="mobOnly">Group<select id="aGroup"></select></label>
           <label>Colour (optional)<input id="aColor" type="text" placeholder="group colour"></label>
-          <label class="wide">Article link (page title, optional)<input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
-          <label class="wide">More mobs in this area (one per line)<textarea id="aMobs" rows="3" placeholder="a skeletal excavator&#10;a filthy rat | NPC:A filthy rat (sewers)"></textarea></label>
-          <p class="note wide">Each one links to NPC:<em>its name</em>; add “| page” after a name to link another page.</p>
+          <label class="wide">Article link (page title<span class="mobOnly">, optional</span>)<input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
+          <label class="wide mobOnly">More mobs in this area (one per line)<textarea id="aMobs" rows="3" placeholder="a skeletal excavator&#10;a filthy rat | NPC:A filthy rat (sewers)"></textarea></label>
+          <p class="note wide mobOnly">Each one links to NPC:<em>its name</em>; add “| page” after a name to link another page.</p>
+          <label class="wide linkOnly"><span><input id="aLabel" type="checkbox"> Show its name on the map</span></label>
+          <p class="note wide linkOnly">Leave the name off for a zone already named on the picture. Turn it on for a link out at the edge (e.g. “The Ruins of Harbourview →”): its name shows as a label you can drag to place, and the label is clickable too. With a colour the shape is lightly tinted; without one it only shows when hovered.</p>
           <p class="note wide" id="aHelp">Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.</p>
           <div class="wide areabtns">
             <button id="finishBtn" class="primary" type="button" hidden>Finish shape</button>
@@ -399,14 +412,15 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function allIds() { var s = {}; eachMarker(function (m) { if (m.id != null) s[m.id] = 1; }); return s; }
 
   /* ---------- undo ---------- */
-  var selA = null, drawing = false;      // selected area (index into custom.areas), drawing a new one
-  function snap() { return JSON.stringify({ d: data, s: sel, a: selA }); }
+  var selA = null, drawing = false;      // selected area (index into custom.areas or custom.zoneLinks), drawing a new one
+  var areaKind = 'areas';                // which list the Areas card edits: 'areas' (mob areas) or 'zoneLinks'
+  function snap() { return JSON.stringify({ d: data, s: sel, a: selA, k: areaKind }); }
   function pushUndo() { var s = snap(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 200) undo.shift(); $('undoBtn').disabled = false; }
   function doUndo() {
     var now = snap();
     while (undo.length) {
       var s = undo.pop();
-      if (s !== now) { var o = JSON.parse(s); data = o.d; sel = o.s; selA = o.a == null ? null : o.a; break; }
+      if (s !== now) { var o = JSON.parse(s); data = o.d; sel = o.s; selA = o.a == null ? null : o.a; areaKind = o.k || 'areas'; break; }
     }
     $('undoBtn').disabled = !undo.length;
     render();
@@ -501,24 +515,29 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var n = bgName();
     $('hintText').textContent = 'No background loaded. Choose “Background image…” and pick ' + (n ? n : 'the map image') + ', or drop it here.';
   }
-  /* ---------- areas: "custom": { "areas": [ { name, group, article, color, points: [[y, x], ...] } ] } ---------- */
-  function areaList(create) {
+  /* ---------- areas: "custom": { "areas": [ { name, group, article, color, points: [[y, x], ...] } ] } ----------
+     zone links: "custom": { "zoneLinks": [ { name, article, color, label, labelAt: [y, x], points } ] } - a click on
+     the shape (or its label) opens the article, e.g. Zone:The City of Leont. Same editing as areas. */
+  function listOf(kind, create) {
     if (create) {
       if (!data.custom || typeof data.custom !== 'object' || Array.isArray(data.custom)) data.custom = {};
-      if (!Array.isArray(data.custom.areas)) data.custom.areas = [];
+      if (!Array.isArray(data.custom[kind])) data.custom[kind] = [];
     }
-    return (data.custom && Array.isArray(data.custom.areas)) ? data.custom.areas : [];
+    return (data.custom && Array.isArray(data.custom[kind])) ? data.custom[kind] : [];
   }
+  function areaList(create) { return listOf(areaKind, create); }
+  function isLinks() { return areaKind === 'zoneLinks'; }
   function curA() { var l = areaList(); return selA != null && l[selA] ? l[selA] : null; }
   function ptFrac(p) { return toFrac({ x: Number(p[1]), y: Number(p[0]) }); }   // area points are [y, x]
   function fracPt(fx, fy) { var q = fromFrac(clamp(fx), clamp(fy)); return [q.y, q.x]; }
-  function areaColour(a) {
+  function areaColour(a, kind) {
     if (a.color) return a.color;
+    if ((kind || areaKind) === 'zoneLinks') return '#14b8a6';
     var d = groupDef(a.group);
     if (d && typeof d.fillColor === 'string') return d.fillColor;
     return '#e53935';
   }
-  function areaName(a, i) { return a.name || ('Area ' + (i + 1)); }
+  function areaName(a, i) { return a.name || ((isLinks() ? 'Zone link ' : 'Area ') + (i + 1)); }
   function areaMobs(a) { return Array.isArray(a.mobs) ? a.mobs.filter(function (m) { return m && m.name; }) : []; }
   // On the map: every mob in the area, one per line
   function areaNames(a, i) { return [areaName(a, i)].concat(areaMobs(a).map(function (m) { return m.name; })).join('\n'); }
@@ -528,8 +547,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     }).join('\n');
   }
   function tidyAreas() {
-    var l = areaList();
-    if (data.custom && Array.isArray(data.custom.areas) && !l.length) delete data.custom.areas;
+    ['areas', 'zoneLinks'].forEach(function (k) { if (data.custom && Array.isArray(data.custom[k]) && !data.custom[k].length) delete data.custom[k]; });
     if (data.custom && typeof data.custom === 'object' && !Object.keys(data.custom).length) delete data.custom;
   }
 
@@ -538,6 +556,16 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     svg.textContent = ''; hd.textContent = '';
     if (selA != null && !l[selA]) selA = null;
     var names = $('showNames').checked;
+    // The other kind (zone links while editing mob areas, and the other way round): faint, not clickable.
+    var otherKind = isLinks() ? 'areas' : 'zoneLinks';
+    listOf(otherKind).forEach(function (a) {
+      var pts = (a.points || []).map(ptFrac);
+      if (pts.length < 3) return;
+      var sh = document.createElementNS(ns, 'polygon');
+      sh.setAttribute('points', pts.map(function (f) { return (f.fx * 1000).toFixed(1) + ',' + (f.fy * 1000).toFixed(1); }).join(' '));
+      sh.setAttribute('stroke', areaColour(a, otherKind)); sh.setAttribute('fill', areaColour(a, otherKind)); sh.setAttribute('class', 'other');
+      svg.appendChild(sh);
+    });
     l.forEach(function (a, i) {
       var pts = (a.points || []).map(ptFrac);
       if (!pts.length) return;
@@ -548,9 +576,14 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       shape.setAttribute('data-a', i);
       if (i === selA) shape.setAttribute('class', 'on');
       svg.appendChild(shape);
-      if (names && pts.length >= 3 && !open) {
+      if (pts.length >= 3 && !open && (isLinks() ? (a.label || i === selA) : names)) {
         var cx = 0, cy = 0; pts.forEach(function (f) { cx += f.fx; cy += f.fy; });
-        var lab = el('div', 'alab', areaNames(a, i)); lab.style.left = (cx / pts.length * 100) + '%'; lab.style.top = (cy / pts.length * 100) + '%';
+        var lf = { fx: cx / pts.length, fy: cy / pts.length };
+        if (isLinks() && Array.isArray(a.labelAt)) lf = ptFrac(a.labelAt);
+        var lab = el('div', 'alab' + (isLinks() && a.label && i === selA ? ' zlab' : ''),
+                     isLinks() ? (a.name || areaName(a, i)) + (a.label ? '' : '  (link only)') : areaNames(a, i));
+        if (isLinks() && a.label && i === selA) { lab.dataset.zl = i; lab.title = 'Drag to place the name'; }
+        lab.style.left = (lf.fx * 100) + '%'; lab.style.top = (lf.fy * 100) + '%';
         hd.appendChild(lab);
       }
       if (i !== selA) return;
@@ -584,16 +617,28 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     l.forEach(function (a, i) {
       var b = el('button', 'row' + (i === selA ? ' on' : '')); b.type = 'button';
       var sw = el('span', 'sw'); sw.style.setProperty('--c', areaColour(a)); sw.style.borderRadius = '3px';
-      b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i) + (areaMobs(a).length ? ' + ' + areaMobs(a).length + ' more' : '')));
+      b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i) + (isLinks() ? (a.article ? '  ·  ' + a.article : '') : (areaMobs(a).length ? ' + ' + areaMobs(a).length + ' more' : ''))));
       b.appendChild(el('span', 'num', (a.points || []).length + ' corners'));
       b.addEventListener('click', function () { if (drawing) finishDraw(); selA = i; sel = null; render(); });
       box.appendChild(b);
     });
-    $('areaTitle').textContent = 'Areas (' + l.length + ')';
-    if (!l.length) box.appendChild(el('p', 'note', 'No areas on this map yet.'));
+    var links = isLinks();
+    $('areaTitle').textContent = (links ? 'Zone links (' : 'Areas (') + l.length + ')';
+    $('kindAreas').setAttribute('aria-pressed', String(!links)); $('kindLinks').setAttribute('aria-pressed', String(links));
+    $('kindNote').textContent = links
+      ? 'Clickable shapes that open another page, e.g. a town tinted on the picture (Zone:The City of Leont), or a zone just past the map\'s edge. “+ Draw area” in the toolbar draws a new one.'
+      : 'Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.';
+    $('drawBtn').textContent = links ? '+ Draw zone link' : '+ Draw area';
+    $('aDelBtn').textContent = links ? 'Delete zone link' : 'Delete area';
+    Array.prototype.forEach.call(document.querySelectorAll('#aForm .mobOnly'), function (n) { n.hidden = links; });
+    Array.prototype.forEach.call(document.querySelectorAll('#aForm .linkOnly'), function (n) { n.hidden = !links; });
+    $('aArticle').placeholder = links ? 'Zone:The City of Leont' : 'NPC:A grainmaw nymph';
+    $('aColor').placeholder = links ? 'none (only shows when hovered)' : 'group colour';
+    if (!l.length) box.appendChild(el('p', 'note', links ? 'No zone links on this map yet.' : 'No areas on this map yet.'));
     var a = curA();
     $('aForm').hidden = !a;
     if (!a) return;
+    $('aLabel').checked = !!a.label;
     $('aName').value = a.name || '';
     fillGroupSelect($('aGroup'), a.group || '');
     $('aColor').value = a.color || '';
@@ -602,7 +647,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     $('finishBtn').hidden = !drawing;
     $('aHelp').textContent = drawing
       ? 'Click the map to add corners. Click the first corner, press Enter or “Finish shape” when done (3 or more corners).'
-      : 'Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.';
+      : 'Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.' +
+        (links && a.label ? ' Drag the name label to place it.' : '');
   }
 
   function render() { renderGroups(); renderList(); renderMarkers(); renderAreas(); renderAreaPanel(); renderEditor(); renderHint(); writeJSON(); }
@@ -649,7 +695,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   // Drag an empty spot (or hold the middle button anywhere) to move around a zoomed-in map.
   var pan = null;
   viewport.addEventListener('pointerdown', function (e) {
-    var t = e.target, onThing = t.closest && (t.closest('.mk') || t.closest('[data-a]') || t.closest('.ah') || t.closest('.am'));
+    var t = e.target, onThing = t.closest && (t.closest('.mk') || t.closest('[data-a]') || t.closest('.ah') || t.closest('.am') || t.closest('.zlab'));
     if (!(e.button === 1 || (e.button === 0 && !onThing && !addMode && !drawing))) return;
     pan = { id: e.pointerId, x: e.clientX, y: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop };
     if (e.button === 1) e.preventDefault();
@@ -739,9 +785,13 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (on) {
       if (addMode) setAdd(false);
       pushUndo();
-      var l = areaList(true), g = groupDef('amMob') ? 'amMob' : (activeGroup || groupIds()[0] || 'amMob');   // areas are mostly mob spawns
-      ensureGroup(g);
-      l.push({ name: 'New area', group: g, points: [] });
+      var l = areaList(true);
+      if (isLinks()) l.push({ name: 'New zone', article: 'Zone:', points: [] });
+      else {
+        var g = groupDef('amMob') ? 'amMob' : (activeGroup || groupIds()[0] || 'amMob');   // areas are mostly mob spawns
+        ensureGroup(g);
+        l.push({ name: 'New area', group: g, points: [] });
+      }
       selA = l.length - 1; sel = null; drawing = true;
       say('Click the map to place the corners of the area.', '');
     } else drawing = false;
@@ -757,7 +807,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       l.splice(selA, 1); selA = null; tidyAreas();
       say('Area removed: it needs at least 3 corners.', 'bad');
     } else if (a) {
-      say('Area finished. Name it and pick its group on the right.', 'ok');
+      say(isLinks() ? 'Zone link finished. Name it and set the page it opens on the right.' : 'Area finished. Name it and pick its group on the right.', 'ok');
       setTimeout(function () { $('aName').focus(); $('aName').select(); }, 0);
     }
     render();
@@ -772,6 +822,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function markerToArea() {
     var m = cur(); if (!m) return;
     pushUndo();
+    areaKind = 'areas';
     var g = groupOf(sel.k), f = toFrac(m), r = 0.035, pts = [];
     for (var k = 0; k < 8; k++) {
       var t = Math.PI * 2 * k / 8 + Math.PI / 8;
@@ -808,7 +859,13 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (e.button) return;
     var t = e.target, f0 = fracAt(e);
     var corner = t.closest ? t.closest('.ah') : null, mid = t.closest ? t.closest('.am') : null;
-    var a0 = curA();
+    var a0 = curA(), zl = t.closest ? t.closest('.zlab') : null;
+    if (zl && a0 && !drawing) {
+      e.preventDefault();
+      drag = { kind: 'label', id: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
     if (corner && a0) {
       e.preventDefault();
       var c = Number(corner.dataset.c);
@@ -838,7 +895,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       selA = Number(shape.getAttribute('data-a')); sel = null; render();
       var a1 = curA();
       drag = { kind: 'area', id: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false, f0: f0,
-               orig: (a1.points || []).map(function (p) { return ptFrac(p); }) };
+               orig: (a1.points || []).map(function (p) { return ptFrac(p); }),
+               lab: Array.isArray(a1.labelAt) ? ptFrac(a1.labelAt) : null };
       try { stage.setPointerCapture(e.pointerId); } catch (err) {}
       return;
     }
@@ -863,11 +921,17 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
         if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 3) return;
         drag.moved = true; pushUndo();
       }
-      if (drag.kind === 'corner') {
+      if (drag.kind === 'label') {
+        var al = curA(); if (al) { al.labelAt = fracPt(f.fx, f.fy); renderAreas(); }
+      } else if (drag.kind === 'corner') {
         var ac = curA(); if (ac) { ac.points[drag.c] = fracPt(f.fx, f.fy); renderAreas(); }
       } else if (drag.kind === 'area') {
         var aa = curA(), dx = f.fx - drag.f0.fx, dy = f.fy - drag.f0.fy;
-        if (aa) { aa.points = drag.orig.map(function (q) { return fracPt(q.fx + dx, q.fy + dy); }); renderAreas(); }
+        if (aa) {
+          aa.points = drag.orig.map(function (q) { return fracPt(q.fx + dx, q.fy + dy); });
+          if (drag.lab) aa.labelAt = fracPt(drag.lab.fx + dx, drag.lab.fy + dy);   // a placed label moves with its shape
+          renderAreas();
+        }
       } else moveSel(f.fx - drag.ox, f.fy - drag.oy);
     } else if (f.fx >= 0 && f.fx <= 1 && f.fy >= 0 && f.fy <= 1) showXY(fromFrac(f.fx, f.fy));
   });
@@ -995,6 +1059,19 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     areaField('mobs', list.length ? list : null);
   });
   $('aGroup').addEventListener('change', function () { ensureGroup(this.value); areaField('group', this.value); renderGroups(); });
+  $('aLabel').addEventListener('change', function () {
+    pushUndo();
+    var a = curA(); if (!a) return;
+    if (this.checked) a.label = true; else { delete a.label; delete a.labelAt; }
+    renderAreas(); renderAreaPanel(); writeJSON();
+  });
+  function setKind(k) {
+    if (k === areaKind) return;
+    if (drawing) finishDraw();
+    areaKind = k; selA = null; render();
+  }
+  $('kindAreas').addEventListener('click', function () { setKind('areas'); });
+  $('kindLinks').addEventListener('click', function () { setKind('zoneLinks'); });
 
   /* ---------- editor fields ---------- */
   function setOrDrop(m, key, val) { if (val === '' || val == null) delete m[key]; else m[key] = val; }
