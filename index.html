@@ -331,6 +331,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     "amTradeTrainer": { "name": "Tradeskill Trainer(s)", "icon": "MapIconTradeskillTrainer.png", "size": [128, 128] },
     "amStairs": { "name": "Stair(s)", "icon": "MapIconStairs.png", "size": [128, 128] },
     "amPOI": { "name": "Point(s) of Interest", "icon": "MapIconPointOfInterest.png", "size": [128, 128] },
+    "amZone": { "name": "Zone(s)", "icon": "MapIconZone.png", "size": [128, 128] },
     "amNPC": { "name": "NPC(s)", "fillColor": "#facc15", "size": 12, "static": true, "strokeColor": "#111111", "strokeWidth": 2 },
     "amMob": { "name": "Mob(s)", "fillColor": "#9ca3af", "size": 12, "static": true, "strokeColor": "#111111", "strokeWidth": 2 }
   };
@@ -364,6 +365,13 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     });
   }
   // A marker is going into a group the map doesn't define yet: copy the definition in.
+  // Zone links are listed in the map's Contents under "Zone(s)": that group is added if missing and kept last.
+  function zoneGroupLast() {
+    ensureGroup('amZone');
+    var g = data.groups.amZone; delete data.groups.amZone;
+    if (!g.name || g.name === 'Zone') g.name = 'Zone(s)';
+    data.groups.amZone = g;
+  }
   function ensureGroup(g) {
     if (!data.groups || typeof data.groups !== 'object') data.groups = {};
     if (!data.groups[g] && LIBRARY[g]) data.groups[g] = JSON.parse(JSON.stringify(LIBRARY[g]));
@@ -646,7 +654,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (document.activeElement !== $('aMobs')) $('aMobs').value = mobsText(a);
     $('finishBtn').hidden = !drawing;
     $('aHelp').textContent = drawing
-      ? 'Click the map to add corners. Click the first corner, press Enter or “Finish shape” when done (3 or more corners).'
+      ? 'Press and drag on the map to draw a box, or click corner by corner (click the first corner, press Enter or “Finish shape” when done). “Make it a box” drops a box to move into place.'
       : 'Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.' +
         (links && a.label ? ' Drag the name label to place it.' : '');
   }
@@ -696,6 +704,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   var pan = null;
   viewport.addEventListener('pointerdown', function (e) {
     var t = e.target, onThing = t.closest && (t.closest('.mk') || t.closest('[data-a]') || t.closest('.ah') || t.closest('.am') || t.closest('.zlab'));
+    // Drawing and clicked beside the picture: the corner goes on the picture's nearest edge.
+    if (drawing && e.button === 0 && !stage.contains(t)) { var fe = fracAt(e); drawPress(e, { fx: clamp(fe.fx), fy: clamp(fe.fy) }); return; }
     if (!(e.button === 1 || (e.button === 0 && !onThing && !addMode && !drawing))) return;
     pan = { id: e.pointerId, x: e.clientX, y: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop };
     if (e.button === 1) e.preventDefault();
@@ -786,14 +796,14 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       if (addMode) setAdd(false);
       pushUndo();
       var l = areaList(true);
-      if (isLinks()) l.push({ name: 'New zone', article: 'Zone:', points: [] });
+      if (isLinks()) { l.push({ name: 'New zone', article: 'Zone:', group: 'amZone', points: [] }); zoneGroupLast(); }
       else {
         var g = groupDef('amMob') ? 'amMob' : (activeGroup || groupIds()[0] || 'amMob');   // areas are mostly mob spawns
         ensureGroup(g);
         l.push({ name: 'New area', group: g, points: [] });
       }
       selA = l.length - 1; sel = null; drawing = true;
-      say('Click the map to place the corners of the area.', '');
+      say('Press and drag on the map to draw a box, or click to place corners one by one.', '');
     } else drawing = false;
     $('drawBtn').setAttribute('aria-pressed', String(drawing));
     stage.classList.toggle('drawing', drawing);
@@ -811,6 +821,11 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       setTimeout(function () { $('aName').focus(); $('aName').select(); }, 0);
     }
     render();
+  }
+  // The middle of what's on screen, as a share of the picture.
+  function centreFrac() {
+    var sw = stage.offsetWidth || 1, sh = stage.offsetHeight || 1;
+    return { fx: clamp((viewport.scrollLeft + viewport.clientWidth / 2) / sw), fy: clamp((viewport.scrollTop + viewport.clientHeight / 2) / sh) };
   }
   function addCorner(f) {
     var a = curA(); if (!a) return;
@@ -855,6 +870,16 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     $('fName').focus(); $('fName').select();
   }
 
+  // While drawing: each click adds a corner; the first press can be dragged out into a box (let go to finish).
+  function drawPress(e, f0) {
+    e.preventDefault();
+    var a0 = curA(), first = !((a0 && a0.points) || []).length;
+    addCorner(f0);
+    if (first) {
+      drag = { kind: 'rect', id: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false, f0: f0 };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+  }
   stage.addEventListener('pointerdown', function (e) {
     if (e.button) return;
     var t = e.target, f0 = fracAt(e);
@@ -888,7 +913,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       try { stage.setPointerCapture(e.pointerId); } catch (err) {}
       return;
     }
-    if (drawing) { e.preventDefault(); addCorner(f0); return; }
+    if (drawing) { drawPress(e, f0); return; }
     var shape = t.closest ? t.closest('[data-a]') : null;
     if (shape && !(t.closest && t.closest('.mk'))) {
       e.preventDefault();
@@ -921,7 +946,10 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
         if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 3) return;
         drag.moved = true; pushUndo();
       }
-      if (drag.kind === 'label') {
+      if (drag.kind === 'rect') {
+        var ar = curA(), g0 = drag.f0;
+        if (ar) { ar.points = [fracPt(g0.fx, g0.fy), fracPt(f.fx, g0.fy), fracPt(f.fx, f.fy), fracPt(g0.fx, f.fy)]; renderAreas(); }
+      } else if (drag.kind === 'label') {
         var al = curA(); if (al) { al.labelAt = fracPt(f.fx, f.fy); renderAreas(); }
       } else if (drag.kind === 'corner') {
         var ac = curA(); if (ac) { ac.points[drag.c] = fracPt(f.fx, f.fy); renderAreas(); }
@@ -937,7 +965,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   });
   function endDrag(e) {
     if (!drag || drag.id !== e.pointerId) return;
-    var moved = drag.moved; drag = null;
+    var moved = drag.moved, kind = drag.kind; drag = null;
+    if (kind === 'rect' && moved && drawing) { finishDraw(); return; }
     if (moved) { renderList(); renderAreas(); renderAreaPanel(); writeJSON(); }
   }
   stage.addEventListener('pointerup', endDrag);
@@ -1034,7 +1063,17 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     say('Corners: ' + before + ' -> ' + pts.length + '.', 'ok');
   });
   $('aBoxBtn').addEventListener('click', function () {
-    var a = curA(); if (!a || !a.points || a.points.length < 3) return;
+    var a = curA(); if (!a) return;
+    if (!a.points || a.points.length < 3) {
+      // Only a corner or two so far: a box around them (about 6% of the map's width), and drawing ends.
+      var q = (a.points || [])[0];
+      var c = q ? ptFrac(q) : centreFrac(), r = 0.03;
+      pushUndo();
+      a.points = [fracPt(c.fx - r, c.fy - r * aspect), fracPt(c.fx + r, c.fy - r * aspect), fracPt(c.fx + r, c.fy + r * aspect), fracPt(c.fx - r, c.fy + r * aspect)];
+      if (drawing) finishDraw(); else render();
+      say('Made a box. Drag it into place and drag its corners to size it.', 'ok');
+      return;
+    }
     var p0 = Infinity, p1 = Infinity, q0 = -Infinity, q1 = -Infinity;
     a.points.forEach(function (p) { p0 = Math.min(p0, p[0]); p1 = Math.min(p1, p[1]); q0 = Math.max(q0, p[0]); q1 = Math.max(q1, p[1]); });
     pushUndo();
@@ -1068,7 +1107,16 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function setKind(k) {
     if (k === areaKind) return;
     if (drawing) finishDraw();
-    areaKind = k; selA = null; render();
+    areaKind = k; selA = null;
+    // Older zone links (made before the Zone(s) group): give them the group so they show in the map's Contents.
+    var zl = listOf('zoneLinks');
+    if (k === 'zoneLinks' && zl.length && (zl.some(function (z) { return !z.group; }) || !groupDef('amZone') || Object.keys(data.groups || {}).slice(-1)[0] !== 'amZone')) {
+      pushUndo();
+      zl.forEach(function (z) { if (!z.group) z.group = 'amZone'; });
+      zoneGroupLast();
+      say('Zone links now listed under Zone(s) in the map\'s Contents (group added at the bottom).', 'ok');
+    }
+    render();
   }
   $('kindAreas').addEventListener('click', function () { setKind('areas'); });
   $('kindLinks').addEventListener('click', function () { setKind('zoneLinks'); });
