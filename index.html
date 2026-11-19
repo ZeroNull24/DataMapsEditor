@@ -107,6 +107,7 @@ svg.areas polyline { fill: none; stroke-dasharray: 5 4; pointer-events: none }
 svg.areas polygon.other { fill-opacity: .08; stroke-dasharray: 3 3; pointer-events: none; opacity: .6 }
 .zlab { pointer-events: auto; cursor: grab; touch-action: none; outline: 2px dashed var(--sel); outline-offset: 2px }
 .kinds { display: flex; gap: 0; margin: 0 0 8px }
+.kinds.top { display: inline-flex; margin: 0 }
 .kinds button { flex: 1 1 0; border-radius: 0 }
 .kinds button:first-child { border-radius: 6px 0 0 6px }
 .kinds button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px }
@@ -134,6 +135,10 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     <label class="btn">Background image…<input type="file" id="bgFile" accept="image/*"></label>
     <label class="btn">Marker icons…<input type="file" id="iconFiles" accept="image/*" multiple></label>
     <button id="addBtn" aria-pressed="false" type="button">+ Add marker</button>
+    <span class="kinds top" role="group" aria-label="What + Draw makes">
+      <button id="kindAreasTop" type="button" aria-pressed="true" title="Edit mob areas (shaded spawn areas)">Mob areas</button>
+      <button id="kindLinksTop" type="button" aria-pressed="false" title="Edit zone links (clickable shapes that open another page)">Zone links</button>
+    </span>
     <button id="drawBtn" aria-pressed="false" type="button" title="Click the map to place corners; click the first corner, press Enter or “Finish shape” to close it">+ Draw area</button>
     <button id="undoBtn" type="button" disabled>Undo</button>
     <label class="chk"><input type="checkbox" id="showNames" checked> Show names</label>
@@ -632,6 +637,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var links = isLinks();
     $('areaTitle').textContent = (links ? 'Zone links (' : 'Areas (') + l.length + ')';
     $('kindAreas').setAttribute('aria-pressed', String(!links)); $('kindLinks').setAttribute('aria-pressed', String(links));
+    $('kindAreasTop').setAttribute('aria-pressed', String(!links)); $('kindLinksTop').setAttribute('aria-pressed', String(links));
     $('kindNote').textContent = links
       ? 'Clickable shapes that open another page, e.g. a town tinted on the picture (Zone:The City of Leont), or a zone just past the map\'s edge. “+ Draw area” in the toolbar draws a new one.'
       : 'Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.';
@@ -1119,6 +1125,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   }
   $('kindAreas').addEventListener('click', function () { setKind('areas'); });
   $('kindLinks').addEventListener('click', function () { setKind('zoneLinks'); });
+  $('kindAreasTop').addEventListener('click', function () { setKind('areas'); });
+  $('kindLinksTop').addEventListener('click', function () { setKind('zoneLinks'); });
 
   /* ---------- editor fields ---------- */
   function setOrDrop(m, key, val) { if (val === '' || val == null) delete m[key]; else m[key] = val; }
