@@ -234,8 +234,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       "amBanker": { "name": "Banker", "icon": "MapIconBanker.png", "size": [128, 128] },
       "amStable": { "name": "Stable Master", "icon": "MapIconStableMaster.png", "size": [128, 128] },
       "amClassTrainer": { "name": "Class Trainer", "icon": "MapIconClassTrainer.png", "size": [128, 128] },
-      "amTradeTrainer": { "name": "Tradeskill Trainer", "icon": "MapIconTradeskillTrainer.png", "size": [128, 128] },
-      "amZone": { "name": "Zone", "icon": "MapIconZone.png", "size": [128, 128] }
+      "amTradeTrainer": { "name": "Tradeskill Trainer", "icon": "MapIconTradeskillTrainer.png", "size": [128, 128] }
     },
     "markers": {
       "amNamed": [{ "id": "test-named", "x": 82.79, "y": 55.5, "name": "Test Named", "description": ["Named"] }],
@@ -246,8 +245,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       "amTradeTrainer": [
         { "id": "test-metalworking", "x": 32.79, "y": 75.5, "name": "Test Metalworking Trainer", "description": ["Metalworking Trainer"] },
         { "id": "test-butchering", "x": 32.79, "y": 44.5, "name": "Test Butchering Trainer", "description": ["Butchering Trainer"] }
-      ],
-      "amZone": [{ "id": "test-zone", "x": 82.79, "y": 40.5, "name": "Zone Icon", "description": ["Zone"] }]
+      ]
     }
   };
   var HUES = [355, 205, 40, 285, 130, 22, 180, 320, 70, 240];
@@ -331,7 +329,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     "amTradeTrainer": { "name": "Tradeskill Trainer(s)", "icon": "MapIconTradeskillTrainer.png", "size": [128, 128] },
     "amStairs": { "name": "Stair(s)", "icon": "MapIconStairs.png", "size": [128, 128] },
     "amPOI": { "name": "Point(s) of Interest", "icon": "MapIconPointOfInterest.png", "size": [128, 128] },
-    "amZone": { "name": "Zone(s)", "icon": "MapIconZone.png", "size": [128, 128] },
+    "amZone": { "name": "Zone(s)", "fillColor": "#bbf7d0", "size": 12, "static": true, "strokeColor": "#166534", "strokeWidth": 2 },
     "amNPC": { "name": "NPC(s)", "fillColor": "#facc15", "size": 12, "static": true, "strokeColor": "#111111", "strokeWidth": 2 },
     "amMob": { "name": "Mob(s)", "fillColor": "#9ca3af", "size": 12, "static": true, "strokeColor": "#111111", "strokeWidth": 2 }
   };
@@ -369,6 +367,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function zoneGroupLast() {
     ensureGroup('amZone');
     var g = data.groups.amZone; delete data.groups.amZone;
+    if (g.icon) g = JSON.parse(JSON.stringify(LIBRARY.amZone));   // the old MapIconZone.png group: the light green box instead
     if (!g.name || g.name === 'Zone') g.name = 'Zone(s)';
     data.groups.amZone = g;
   }
@@ -1110,7 +1109,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     areaKind = k; selA = null;
     // Older zone links (made before the Zone(s) group): give them the group so they show in the map's Contents.
     var zl = listOf('zoneLinks');
-    if (k === 'zoneLinks' && zl.length && (zl.some(function (z) { return !z.group; }) || !groupDef('amZone') || Object.keys(data.groups || {}).slice(-1)[0] !== 'amZone')) {
+    if (k === 'zoneLinks' && zl.length && (zl.some(function (z) { return !z.group; }) || !groupDef('amZone') || !!(groupDef('amZone') || {}).icon || Object.keys(data.groups || {}).slice(-1)[0] !== 'amZone')) {
       pushUndo();
       zl.forEach(function (z) { if (!z.group) z.group = 'amZone'; });
       zoneGroupLast();
