@@ -104,7 +104,9 @@ svg.areas polyline { fill: none; stroke-dasharray: 5 4; pointer-events: none }
 .alab { text-align: center; position: absolute; transform: translate(-50%, -50%); background: var(--map-label-bg); color: var(--map-label-fg); font-size: 11px;
   line-height: 1.2; padding: 2px 6px; border-radius: 3px; white-space: pre; pointer-events: none; opacity: .9 }
 .stage.drawing { cursor: crosshair }
-.areabtns { display: flex; flex-wrap: wrap; gap: 6px }
+.areabtns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
+.areabtns .tol { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px }
+.areabtns .tol input { width: 64px }
 
 .jsonhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
 .jsonhead .sep { flex: 1 1 0 }
@@ -184,6 +186,9 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
           <p class="note wide" id="aHelp">Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.</p>
           <div class="wide areabtns">
             <button id="finishBtn" class="primary" type="button" hidden>Finish shape</button>
+            <button id="aMergeBtn" type="button" title="Removes corners that barely change the shape (closer to a straight line than the tolerance) and merges corners that sit close together">Merge corners</button>
+            <label class="tol" title="How much the outline may change, in map units (the same units as x / y)">within <input id="aTol" type="number" min="0.05" step="0.05" value="0.5"></label>
+            <button id="aBoxBtn" type="button" title="Turns the area into a plain 4-corner box around its current shape">Make it a box</button>
             <button class="danger" id="aDelBtn" type="button">Delete area</button>
           </div>
         </div>
@@ -915,6 +920,64 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     tidyAreas(); render();
   }
   $('aDelBtn').addEventListener('click', removeArea);
+
+  // ---------- tidy an area's corners ----------
+  // Points are [a, b] pairs in map units; both axes use the same units, so distances work directly.
+  function segDist(p, a, b) {
+    var dx = b[0] - a[0], dy = b[1] - a[1], len = dx * dx + dy * dy;
+    var t = len ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len)) : 0;
+    var x = a[0] + t * dx - p[0], y = a[1] + t * dy - p[1];
+    return Math.sqrt(x * x + y * y);
+  }
+  // Ramer-Douglas-Peucker on an open run of points (keeps both ends).
+  function rdp(pts, tol) {
+    if (pts.length < 3) return pts.slice();
+    var best = -1, bi = 0;
+    for (var i = 1; i < pts.length - 1; i++) { var d = segDist(pts[i], pts[0], pts[pts.length - 1]); if (d > best) { best = d; bi = i; } }
+    if (best <= tol) return [pts[0], pts[pts.length - 1]];
+    var left = rdp(pts.slice(0, bi + 1), tol), right = rdp(pts.slice(bi), tol);
+    return left.slice(0, -1).concat(right);
+  }
+  function round2(v) { return Math.round(v * 100) / 100; }
+  function mergeCorners(points, tol) {
+    var pts = points.map(function (p) { return [Number(p[0]), Number(p[1])]; });
+    // 1. corners closer together than the tolerance become one (their middle)
+    var merged = [];
+    pts.forEach(function (p) {
+      var last = merged[merged.length - 1];
+      if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) <= tol) { last[0] = (last[0] + p[0]) / 2; last[1] = (last[1] + p[1]) / 2; }
+      else merged.push(p.slice());
+    });
+    if (merged.length > 3 && Math.hypot(merged[0][0] - merged[merged.length - 1][0], merged[0][1] - merged[merged.length - 1][1]) <= tol) merged.pop();
+    if (merged.length <= 3) return merged.map(function (p) { return [round2(p[0]), round2(p[1])]; });
+    // 2. corners that hardly bend the outline are dropped (closed shape: split at the two farthest-apart corners)
+    var a = 0, b = 0, far = -1;
+    for (var i = 0; i < merged.length; i++) for (var j = i + 1; j < merged.length; j++) {
+      var d = Math.hypot(merged[i][0] - merged[j][0], merged[i][1] - merged[j][1]);
+      if (d > far) { far = d; a = i; b = j; }
+    }
+    var half1 = merged.slice(a, b + 1), half2 = merged.slice(b).concat(merged.slice(0, a + 1));
+    var out = rdp(half1, tol).slice(0, -1).concat(rdp(half2, tol).slice(0, -1));
+    if (out.length < 3) out = merged;
+    return out.map(function (p) { return [round2(p[0]), round2(p[1])]; });
+  }
+  $('aMergeBtn').addEventListener('click', function () {
+    var a = curA(); if (!a || !a.points || a.points.length <= 3) return;
+    var tol = Math.max(0.01, Number($('aTol').value) || 0.5), before = a.points.length;
+    var pts = mergeCorners(a.points, tol);
+    if (pts.length === before) { say('Nothing to merge at that tolerance - try a bigger number.', ''); return; }
+    pushUndo(); a.points = pts; render();
+    say('Corners: ' + before + ' -> ' + pts.length + '.', 'ok');
+  });
+  $('aBoxBtn').addEventListener('click', function () {
+    var a = curA(); if (!a || !a.points || a.points.length < 3) return;
+    var p0 = Infinity, p1 = Infinity, q0 = -Infinity, q1 = -Infinity;
+    a.points.forEach(function (p) { p0 = Math.min(p0, p[0]); p1 = Math.min(p1, p[1]); q0 = Math.max(q0, p[0]); q1 = Math.max(q1, p[1]); });
+    pushUndo();
+    a.points = [[round2(p0), round2(p1)], [round2(p0), round2(q1)], [round2(q0), round2(q1)], [round2(q0), round2(p1)]];
+    render();
+    say('The area is now a 4-corner box.', 'ok');
+  });
   $('aForm').addEventListener('focusin', pushUndo);
   function areaField(key, val) {
     var a = curA(); if (!a) return;
