@@ -1322,9 +1322,14 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   $('aArticle').addEventListener('input', function () { areaField('article', this.value.trim()); });
   $('aColor').addEventListener('input', function () { areaField('color', this.value.trim()); });
   $('aMobs').addEventListener('input', function () {
+    var cur0 = curA(), had = {};
+    areaMobs(cur0 || {}).forEach(function (m) { had[plainName(m.name)] = m; });
     var list = this.value.split('\n').map(function (line) {
       var parts = line.split('|'), name = parts[0].trim(), page = (parts[1] || '').trim();
-      return name ? { name: name, article: page || 'NPC:' + name } : null;
+      if (!name) return null;
+      var m = { name: name, article: page || 'NPC:' + name }, old = had[plainName(name)];
+      if (old && old.level != null) m.level = old.level;      // keep a level that was already there
+      return m;
     }).filter(Boolean);
     areaField('mobs', list.length ? list : null);
   });
