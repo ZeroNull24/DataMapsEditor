@@ -27,7 +27,7 @@
 
 * { box-sizing: border-box }
 body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); padding-inline: 16px; padding-block: 18px 32px }
-.app { max-width: 1500px; margin-inline: auto; display: flex; flex-direction: column; gap: 14px }
+.app { max-width: 1900px; margin-inline: auto; display: flex; flex-direction: column; gap: 14px }
 h1 { font-size: 20px; font-weight: 600; margin: 0 }
 h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 }
 .sub { margin: 2px 0 0; color: var(--muted); max-width: 70ch }
@@ -52,7 +52,10 @@ input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0 }
 .readout { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 17ch }
 
 .work { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start }
-@media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr) } }
+.work > .side2 { grid-column: 2 }
+@media (min-width: 1400px) { .work { grid-template-columns: minmax(0, 1fr) 320px 330px } .work > .side2 { grid-column: 3; grid-row: 1 } }
+@media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr) } .work > .side2 { grid-column: 1 } }
+.side2 .card { position: sticky; top: 8px }
 .viewport { background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; overflow: auto; min-height: 240px }
 .stage { position: relative; margin: 0 auto; user-select: none; -webkit-user-select: none;
   background-color: var(--sunk);
@@ -125,6 +128,7 @@ svg.areas polygon.other { fill-opacity: .08; stroke-dasharray: 3 3; pointer-even
 .areabtns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
 .areabtns .tol { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px }
 .areabtns .tol input { width: 64px }
+.form .areabtns .tol { flex-direction: row }
 
 .jsonhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
 .jsonhead .sep { flex: 1 1 0 }
@@ -197,6 +201,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
             <button id="onlyNameBtn" type="button" title="Hide every other name on the map, to work on this one (clear the name box at the top to see all again)">Only show this name</button></div>
         </div>
       </div>
+    </aside>
+    <aside class="side2">
       <div class="card" id="areaCard">
         <h2 id="areaTitle">Areas</h2>
         <div class="kinds" role="group" aria-label="Kind of shape">
@@ -204,12 +210,11 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
           <button id="kindLinks" type="button" aria-pressed="false">Zone links</button>
         </div>
         <p class="note" id="kindNote">Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.</p>
-        <div class="rows" id="areaList"></div>
         <div class="form" id="aForm" hidden>
           <label class="wide">Name<input id="aName" type="text"></label>
           <label class="mobOnly">Group<select id="aGroup"></select></label>
           <label>Colour (optional)<input id="aColor" type="text" placeholder="group colour"></label>
-          <label class="wide">Article link (page title<span class="mobOnly">, optional</span>)<input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
+          <label class="wide"><span>Article link (page title<span class="mobOnly">, optional</span>)</span><input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
           <label class="wide mobOnly">More mobs in this area (one per line)<textarea id="aMobs" rows="3" placeholder="a skeletal excavator&#10;a filthy rat | NPC:A filthy rat (sewers)"></textarea></label>
           <p class="note wide mobOnly">Each one links to NPC:<em>its name</em>; add “| page” after a name to link another page.</p>
           <p class="note wide linkOnly">Its name shows on the map as a label (clickable too); drag the label to place it. For a link out at the edge, a name like “The Ruins of Harbourview →” works well. With a colour the shape is lightly tinted; without one it only shows when hovered.</p>
@@ -219,11 +224,12 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
             <button id="finishBtn" class="primary" type="button" hidden>Finish shape</button>
             <button id="aMergeBtn" type="button" title="Removes corners that barely change the shape (closer to a straight line than the tolerance) and merges corners that sit close together">Merge corners</button>
             <label class="tol" title="How much the outline may change, in map units (the same units as x / y)">within <input id="aTol" type="number" min="0.05" step="0.05" value="0.5"></label>
-            <button id="aJoinAllBtn" type="button" title="Every pair of overlapping areas (or zone links) with the same name and group becomes one area">Join overlapping same-name areas</button>
             <button id="aBoxBtn" type="button" title="Turns the area into a plain 4-corner box around its current shape">Make it a box</button>
             <button class="danger" id="aDelBtn" type="button">Delete area</button>
           </div>
         </div>
+        <div class="areabtns" style="margin:8px 0 6px"><button id="aJoinAllBtn" type="button" title="Every pair of overlapping areas (or zone links) with the same name and group becomes one area">Join overlapping same-name areas</button></div>
+        <div class="rows" id="areaList"></div>
       </div>
     </aside>
   </div>
@@ -713,7 +719,9 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   }
   function renderAreaPanel() {
     var box = $('areaList'), l = areaList(); box.textContent = '';
+    var skipped = 0;
     l.forEach(function (a, i) {
+      if (i !== selA && (!nameOk(isLinks() ? [a.name] : areaAllNames(a)) || isHidden(isLinks() ? (a.group || 'amZone') : a.group))) { skipped++; return; }
       var b = el('button', 'row' + (i === selA ? ' on' : '')); b.type = 'button';
       var sw = el('span', 'sw'); sw.style.setProperty('--c', areaColour(a)); sw.style.borderRadius = '3px';
       b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i) + (isLinks() ? (a.article ? '  ·  ' + a.article : '') : (areaMobs(a).length ? ' + ' + areaMobs(a).length + ' more' : ''))));
@@ -722,7 +730,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       box.appendChild(b);
     });
     var links = isLinks();
-    $('areaTitle').textContent = (links ? 'Zone links (' : 'Areas (') + l.length + ')';
+    $('areaTitle').textContent = (links ? 'Zone links (' : 'Areas (') + l.length + ')' + (skipped ? ' · ' + skipped + ' not shown' : '');
     $('kindAreas').setAttribute('aria-pressed', String(!links)); $('kindLinks').setAttribute('aria-pressed', String(links));
     $('kindAreasTop').setAttribute('aria-pressed', String(!links)); $('kindLinksTop').setAttribute('aria-pressed', String(links));
     $('kindNote').textContent = links
