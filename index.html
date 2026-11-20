@@ -81,6 +81,13 @@ aside { display: flex; flex-direction: column; gap: 12px; min-width: 0 }
 .row .sw.ic { width: 16px; height: 16px; border-radius: 0; background: none; display: inline-grid; place-items: center }
 .row .sw.ic img { width: 16px; height: 16px; object-fit: contain; max-width: none }
 .row .nm { overflow-wrap: anywhere }
+.row.vis { grid-template-columns: 22px 16px minmax(0, 1fr) auto }
+.row .eye { width: 22px; height: 20px; display: inline-grid; place-items: center; border-radius: 4px; cursor: pointer; color: var(--muted); font-size: 13px }
+.row .eye:hover { background: var(--sunk); color: inherit }
+.row.hid .sw, .row.hid .nm, .row.hid .num { opacity: .4 }
+.row.hid .nm { text-decoration: line-through }
+.visbar { display: flex; gap: 6px; margin: 0 0 6px }
+.visbar button { font-size: 12px; padding: 2px 8px }
 .row .num { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums }
 .note { color: var(--muted); font-size: 12.5px; margin: 0 }
 .form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
@@ -162,7 +169,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     <aside>
       <div class="card">
         <h2>Groups</h2>
-        <p class="note">Pick the group that “Add marker” places into.</p>
+        <p class="note">Pick the group that “Add marker” places into. The eye hides or shows a group on the map (only here; nothing changes in the JSON). Shift+click an eye to show only that group.</p>
+        <div class="visbar"><button id="visAll" type="button">Show all</button><button id="visNone" type="button">Hide all</button></div>
         <div class="rows" id="groups"></div>
       </div>
       <div class="card">
@@ -424,7 +432,17 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
 
   /* ---------- undo ---------- */
   var selA = null, drawing = false;      // selected area (index into custom.areas or custom.zoneLinks), drawing a new one
-  var areaKind = 'areas';                // which list the Areas card edits: 'areas' (mob areas) or 'zoneLinks'
+  var areaKind = 'areas';
+  // Groups hidden on the map while editing (this browser only, never written to the JSON).
+  var hiddenGroups = {};
+  try { hiddenGroups = JSON.parse(localStorage.getItem('datamaps-editor-hidden') || '{}') || {}; } catch (e) { hiddenGroups = {}; }
+  function saveHidden() { try { localStorage.setItem('datamaps-editor-hidden', JSON.stringify(hiddenGroups)); } catch (e) {} }
+  function isHidden(g) { return !!hiddenGroups[g]; }
+  function setHidden(g, hide) {
+    if (hide) hiddenGroups[g] = 1; else delete hiddenGroups[g];
+    if (sel && isHidden(groupOf(sel.k))) sel = null;
+    saveHidden(); render();
+  }                // which list the Areas card edits: 'areas' (mob areas) or 'zoneLinks'
   function snap() { return JSON.stringify({ d: data, s: sel, a: selA, k: areaKind }); }
   function pushUndo() { var s = snap(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 200) undo.shift(); $('undoBtn').disabled = false; }
   function doUndo() {
@@ -445,6 +463,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     layer.textContent = '';
     var names = $('showNames').checked;
     eachMarker(function (m, k, i) {
+      if (isHidden(groupOf(k))) return;
       var g = groupOf(k), b = el('button', 'mk' + (sel && sel.k === k && sel.i === i ? ' on' : ''));
       b.type = 'button'; b.dataset.k = k; b.dataset.i = i;
       b.setAttribute('aria-label', (m.name || m.id || 'Marker') + ' (' + groupName(g) + ')');
@@ -465,8 +484,22 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var counts = {};
     eachMarker(function (m, k) { var g = groupOf(k); counts[g] = (counts[g] || 0) + 1; });
     function row(g, extra) {
-      var b = el('button', 'row' + (extra ? ' extra' : '') + (g === activeGroup ? ' on' : '')); b.type = 'button';
+      var b = el('button', 'row' + (extra ? ' extra' : ' vis') + (g === activeGroup ? ' on' : '') + (!extra && isHidden(g) ? ' hid' : '')); b.type = 'button';
       b.setAttribute('aria-pressed', 'false');
+      if (!extra) {
+        var eye = el('span', 'eye', isHidden(g) ? '–' : '👁');
+        eye.setAttribute('role', 'button');
+        eye.title = isHidden(g) ? 'Show this group on the map' : 'Hide this group on the map (Shift+click: show only this group)';
+        eye.addEventListener('click', function (e) {
+          e.stopPropagation(); e.preventDefault();
+          if (e.shiftKey) {
+            groupIds().forEach(function (o) { if (o !== g) hiddenGroups[o] = 1; else delete hiddenGroups[o]; });
+            if (sel && isHidden(groupOf(sel.k))) sel = null;
+            saveHidden(); render();
+          } else setHidden(g, !isHidden(g));
+        });
+        b.appendChild(eye);
+      }
       b.appendChild(swatch(g)); b.appendChild(el('span', 'nm', groupName(g))); b.appendChild(el('span', 'num', String(counts[g] || 0)));
       b.addEventListener('click', function () { activeGroup = g; renderGroups(); });
       box.appendChild(b);
@@ -482,7 +515,9 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function renderList() {
     var box = $('list'); box.textContent = '';
     var n = 0;
+    var hid = 0;
     eachMarker(function (m, k, i) {
+      if (isHidden(groupOf(k))) { hid++; return; }
       n++;
       var p = getXY(m), b = el('button', 'row' + (sel && sel.k === k && sel.i === i ? ' on' : '')); b.type = 'button';
       b.appendChild(swatch(groupOf(k))); b.appendChild(el('span', 'nm', m.name || String(m.id || '(unnamed)')));
@@ -493,7 +528,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       });
       box.appendChild(b);
     });
-    $('listTitle').textContent = 'Markers (' + n + ')';
+    $('listTitle').textContent = 'Markers (' + n + ')' + (hid ? ' · ' + hid + ' hidden' : '');
     if (!n) box.appendChild(el('p', 'note', 'No markers yet. Turn on “Add marker” and click the map.'));
   }
 
@@ -570,6 +605,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     // The other kind (zone links while editing mob areas, and the other way round): faint, not clickable.
     var otherKind = isLinks() ? 'areas' : 'zoneLinks';
     listOf(otherKind).forEach(function (a) {
+      if (isHidden(otherKind === 'zoneLinks' ? (a.group || 'amZone') : a.group)) return;
       var pts = (a.points || []).map(ptFrac);
       if (pts.length < 3) return;
       var sh = document.createElementNS(ns, 'polygon');
@@ -580,6 +616,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     l.forEach(function (a, i) {
       var pts = (a.points || []).map(ptFrac);
       if (!pts.length) return;
+      if (i !== selA && isHidden(isLinks() ? (a.group || 'amZone') : a.group)) return;   // its group is hidden (a selected one still shows)
       var str = pts.map(function (f) { return (f.fx * 1000).toFixed(1) + ',' + (f.fy * 1000).toFixed(1); }).join(' ');
       var open = drawing && i === selA, shape = document.createElementNS(ns, open || pts.length < 3 ? 'polyline' : 'polygon');
       shape.setAttribute('points', str);
@@ -857,6 +894,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (!activeGroup) { say('Add a group to the JSON before placing markers.', 'bad'); return; }
     pushUndo();
     ensureGroup(activeGroup);
+    if (isHidden(activeGroup)) { delete hiddenGroups[activeGroup]; saveHidden(); }   // so the new marker shows
     if (!data.markers || typeof data.markers !== 'object') data.markers = {};
     var key = activeGroup;
     if (!data.markers[key]) {
@@ -1117,6 +1155,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   $('kindAreas').addEventListener('click', function () { setKind('areas'); });
   $('kindLinks').addEventListener('click', function () { setKind('zoneLinks'); });
   $('kindAreasTop').addEventListener('click', function () { setKind('areas'); });
+  $('visAll').addEventListener('click', function () { hiddenGroups = {}; saveHidden(); render(); });
+  $('visNone').addEventListener('click', function () { groupIds().forEach(function (g) { hiddenGroups[g] = 1; }); sel = null; saveHidden(); render(); });
   $('kindLinksTop').addEventListener('click', function () { setKind('zoneLinks'); });
 
   /* ---------- editor fields ---------- */
