@@ -653,6 +653,65 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (data.custom && typeof data.custom === 'object' && !Object.keys(data.custom).length) delete data.custom;
   }
 
+	// The point inside a shape farthest from its edges (Mapbox "polylabel"): a name put there always sits
+	// inside, even for a ring or a bent shape whose middle is outside. pts: [ [ x, y ], ... ]
+	function insideLabelPoint( pts, precision ) {
+		var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, i;
+		for ( i = 0; i < pts.length; i++ ) {
+			minX = Math.min( minX, pts[ i ][ 0 ] ); minY = Math.min( minY, pts[ i ][ 1 ] );
+			maxX = Math.max( maxX, pts[ i ][ 0 ] ); maxY = Math.max( maxY, pts[ i ][ 1 ] );
+		}
+		var w = maxX - minX, h = maxY - minY, size = Math.min( w, h );
+		if ( !size ) {
+			return [ ( minX + maxX ) / 2, ( minY + maxY ) / 2 ];
+		}
+		precision = precision || size / 200;
+		function dist( x, y ) {          // signed distance to the outline (+ inside)
+			var inside = false, best = Infinity;
+			for ( var a = 0, b = pts.length - 1; a < pts.length; b = a++ ) {
+				var p = pts[ a ], q = pts[ b ];
+				if ( ( p[ 1 ] > y ) !== ( q[ 1 ] > y ) && x < ( q[ 0 ] - p[ 0 ] ) * ( y - p[ 1 ] ) / ( q[ 1 ] - p[ 1 ] ) + p[ 0 ] ) {
+					inside = !inside;
+				}
+				var dx = q[ 0 ] - p[ 0 ], dy = q[ 1 ] - p[ 1 ], t = 0;
+				if ( dx || dy ) {
+					t = Math.max( 0, Math.min( 1, ( ( x - p[ 0 ] ) * dx + ( y - p[ 1 ] ) * dy ) / ( dx * dx + dy * dy ) ) );
+				}
+				var ex = p[ 0 ] + t * dx - x, ey = p[ 1 ] + t * dy - y;
+				best = Math.min( best, ex * ex + ey * ey );
+			}
+			return ( inside ? 1 : -1 ) * Math.sqrt( best );
+		}
+		function cell( x, y, half ) {
+			var d = dist( x, y );
+			return { x: x, y: y, h: half, d: d, max: d + half * Math.SQRT2 };
+		}
+		var queue = [], cs = size / 2, x, y;
+		for ( x = minX; x < maxX; x += size ) {
+			for ( y = minY; y < maxY; y += size ) {
+				queue.push( cell( x + cs, y + cs, cs ) );
+			}
+		}
+		// start from the average of the corners, if it's inside
+		var cx = 0, cy = 0;
+		for ( i = 0; i < pts.length; i++ ) { cx += pts[ i ][ 0 ]; cy += pts[ i ][ 1 ]; }
+		var best = cell( cx / pts.length, cy / pts.length, 0 ), guard = 0;
+		while ( queue.length && guard++ < 20000 ) {
+			queue.sort( function ( a, b ) { return a.max - b.max; } );
+			var c = queue.pop();
+			if ( c.d > best.d ) {
+				best = c;
+			}
+			if ( c.max - best.d <= precision ) {
+				continue;
+			}
+			var hh = c.h / 2;
+			queue.push( cell( c.x - hh, c.y - hh, hh ), cell( c.x + hh, c.y - hh, hh ),
+				cell( c.x - hh, c.y + hh, hh ), cell( c.x + hh, c.y + hh, hh ) );
+		}
+		return [ best.x, best.y ];
+	}
+
   function renderAreas() {
     var svg = $('areaSvg'), hd = $('handles'), l = areaList(), ns = 'http://www.w3.org/2000/svg';
     svg.textContent = ''; hd.textContent = '';
@@ -683,11 +742,15 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       if (i === selA) shape.setAttribute('class', 'on');
       svg.appendChild(shape);
       if (pts.length >= 3 && !open && (isLinks() || names)) {
-        var cx = 0, cy = 0; pts.forEach(function (f) { cx += f.fx; cy += f.fy; });
-        var lf = { fx: cx / pts.length, fy: cy / pts.length };
-        if (isLinks() && Array.isArray(a.labelAt)) lf = ptFrac(a.labelAt);
-        var lab = el('div', 'alab' + (isLinks() && i === selA ? ' zlab' : ''), isLinks() ? (a.name || areaName(a, i)) : areaNames(a, i));
-        if (isLinks() && i === selA) { lab.dataset.zl = i; lab.title = 'Drag to place the name'; }
+        // The name: where it was dragged to, else the spot inside the shape farthest from its edges (as on the wiki).
+        var lf;
+        if (Array.isArray(a.labelAt)) lf = ptFrac(a.labelAt);
+        else {
+          var q = insideLabelPoint((a.points || []).map(function (p) { return [Number(p[1]), Number(p[0])]; }));
+          lf = ptFrac([q[1], q[0]]);
+        }
+        var lab = el('div', 'alab' + (i === selA ? ' zlab' : ''), isLinks() ? (a.name || areaName(a, i)) : areaNames(a, i));
+        if (i === selA) { lab.dataset.zl = i; lab.title = 'Drag to place the name' + (Array.isArray(a.labelAt) ? ' (double-click: back to automatic)' : ''); }
         lab.style.left = (lf.fx * 100) + '%'; lab.style.top = (lf.fy * 100) + '%';
         hd.appendChild(lab);
       }
@@ -755,7 +818,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     $('aHelp').textContent = drawing
       ? 'Press and drag on the map to draw a box, or click corner by corner (click the first corner, press Enter or “Finish shape” when done). “Make it a box” drops a box to move into place.'
       : 'Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.' +
-        (links ? ' Drag the name label to place it.' : '');
+        ' Drag the name to place it (double-click it to put it back automatically).';
   }
 
   function render() { renderGroups(); renderList(); renderMarkers(); renderAreas(); renderAreaPanel(); renderEditor(); renderHint(); writeJSON(); }
@@ -1265,6 +1328,12 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   $('kindAreas').addEventListener('click', function () { setKind('areas'); });
   $('kindLinks').addEventListener('click', function () { setKind('zoneLinks'); });
   $('kindAreasTop').addEventListener('click', function () { setKind('areas'); });
+  stage.addEventListener('dblclick', function (e) {
+    var hit = document.elementFromPoint(e.clientX, e.clientY) || e.target;     // (the stage captures the pointer)
+    var zl = hit.closest ? hit.closest('.zlab') : null, a = curA();
+    if (!zl || !a || !Array.isArray(a.labelAt)) return;
+    pushUndo(); delete a.labelAt; renderAreas(); writeJSON();
+  });
   $('nameFilter').addEventListener('input', function () { setNameFilter(this.value); });
   $('nameFilter').addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); setNameFilter(''); } });
   $('filtClear').addEventListener('click', function () { setNameFilter(''); });
