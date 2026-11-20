@@ -1107,7 +1107,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (drag && drag.id === e.pointerId) {
       if (!drag.moved) {
         if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 3) return;
-        drag.moved = true; pushUndo();
+        drag.moved = true; pushUndo(); claim(curA());
       }
       if (drag.kind === 'rect') {
         var ar = curA(), g0 = drag.f0;
@@ -1295,8 +1295,11 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     say('The area is now a 4-corner box.', 'ok');
   });
   $('aForm').addEventListener('focusin', pushUndo);
+  // A zone link made by Map Markers.py ("auto": true) that you change becomes yours: the script keeps it from then on.
+  function claim(a) { if (a && a.auto) delete a.auto; }
   function areaField(key, val) {
     var a = curA(); if (!a) return;
+    claim(a);
     if (val === '' || val == null) delete a[key]; else a[key] = val;
     renderAreas(); renderAreaPanel(); writeJSON();
   }
@@ -1312,7 +1315,9 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   });
   $('aGroup').addEventListener('change', function () { ensureGroup(this.value); areaField('group', this.value); renderGroups(); });
   function setKind(k) {
-    if (k === areaKind) return;
+    // Zone links live in the Zone(s) group: if that group's eye is off, nothing would show, so turn it back on.
+    if (k === 'zoneLinks' && isHidden('amZone')) { delete hiddenGroups.amZone; saveHidden(); say('Zone(s) was hidden in Groups; it\'s shown again so you can edit the zone links.', 'ok'); }
+    if (k === areaKind) { render(); return; }
     if (drawing) finishDraw();
     areaKind = k; selA = null;
     // Older zone links (made before the Zone(s) group): give them the group so they show in the map's Contents.
