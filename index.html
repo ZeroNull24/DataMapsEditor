@@ -87,6 +87,9 @@ aside { display: flex; flex-direction: column; gap: 12px; min-width: 0 }
 .row.hid .sw, .row.hid .nm, .row.hid .num { opacity: .4 }
 .row.hid .nm { text-decoration: line-through }
 .visbar { display: flex; gap: 6px; margin: 0 0 6px }
+.filt { display: inline-flex; align-items: center; gap: 2px }
+.filt input { width: 200px }
+.filt input.on { outline: 2px solid var(--sel); outline-offset: 0 }
 .visbar button { font-size: 12px; padding: 2px 8px }
 .row .num { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums }
 .note { color: var(--muted); font-size: 12.5px; margin: 0 }
@@ -149,6 +152,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     <button id="drawBtn" aria-pressed="false" type="button" title="Click the map to place corners; click the first corner, press Enter or “Finish shape” to close it">+ Draw area</button>
     <button id="undoBtn" type="button" disabled>Undo</button>
     <label class="chk"><input type="checkbox" id="showNames" checked> Show names</label>
+    <span class="filt"><input type="search" id="nameFilter" placeholder="Only show names with…" title="Shows only markers and areas whose name contains this (e.g. rat). Put it in quotes for that exact name. Esc clears it."><button id="filtClear" type="button" title="Show every name again" hidden>×</button></span>
     <span class="sep"></span>
     <label class="zoom" title="Mouse wheel over the map zooms where the pointer is; drag an empty spot to move around">Zoom <input type="range" id="zoom" min="1" max="16" step="0.25" value="1"> <span id="zoomVal">1×</span></label>
     <button id="fitBtn" type="button" title="Zoom out to fit the whole map">Fit</button>
@@ -189,7 +193,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
           <label class="wide">Description (one line per entry)<textarea id="fDesc"></textarea></label>
           <label class="wide">Article link (page title, optional)<input id="fArticle" type="text" placeholder="Map:Test"></label>
           <div class="wide areabtns"><button class="danger" id="delBtn" type="button">Delete marker</button>
-            <button id="toAreaBtn" type="button" title="Make a shaded area around this marker (with its name, group and page), to reshape on the map">Turn into area</button></div>
+            <button id="toAreaBtn" type="button" title="Make a shaded area around this marker (with its name, group and page), to reshape on the map">Turn into area</button>
+            <button id="onlyNameBtn" type="button" title="Hide every other name on the map, to work on this one (clear the name box at the top to see all again)">Only show this name</button></div>
         </div>
       </div>
       <div class="card" id="areaCard">
@@ -210,6 +215,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
           <p class="note wide linkOnly">Its name shows on the map as a label (clickable too); drag the label to place it. For a link out at the edge, a name like “The Ruins of Harbourview →” works well. With a colour the shape is lightly tinted; without one it only shows when hovered.</p>
           <p class="note wide" id="aHelp">Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.</p>
           <div class="wide areabtns">
+            <button id="aOnlyNameBtn" type="button" title="Hide every other name on the map, to work on this one">Only show this name</button>
             <button id="finishBtn" class="primary" type="button" hidden>Finish shape</button>
             <button id="aMergeBtn" type="button" title="Removes corners that barely change the shape (closer to a straight line than the tolerance) and merges corners that sit close together">Merge corners</button>
             <label class="tol" title="How much the outline may change, in map units (the same units as x / y)">within <input id="aTol" type="number" min="0.05" step="0.05" value="0.5"></label>
@@ -438,6 +444,21 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   try { hiddenGroups = JSON.parse(localStorage.getItem('datamaps-editor-hidden') || '{}') || {}; } catch (e) { hiddenGroups = {}; }
   function saveHidden() { try { localStorage.setItem('datamaps-editor-hidden', JSON.stringify(hiddenGroups)); } catch (e) {} }
   function isHidden(g) { return !!hiddenGroups[g]; }
+  // Name filter (toolbar): "rat" = names containing rat; "\"a filthy rat\"" = exactly that name. (wanders) is ignored.
+  var nameFilter = '';
+  function plainName(n) { return String(n || '').replace(/\s*\(wanders\)\s*$/i, '').trim().toLowerCase(); }
+  function nameOk(names) {
+    var f = nameFilter.trim();
+    if (!f) return true;
+    var exact = /^".*"$/.test(f) && f.length > 1, want = plainName(exact ? f.slice(1, -1) : f);
+    return [].concat(names).some(function (n) { var p = plainName(n); return exact ? p === want : p.indexOf(want) >= 0; });
+  }
+  function areaAllNames(a) { return [a.name || ''].concat(areaMobs(a).map(function (m) { return m.name; })); }
+  function setNameFilter(v) {
+    nameFilter = v || ''; $('nameFilter').value = nameFilter;
+    $('nameFilter').classList.toggle('on', !!nameFilter.trim()); $('filtClear').hidden = !nameFilter.trim();
+    render();
+  }
   function setHidden(g, hide) {
     if (hide) hiddenGroups[g] = 1; else delete hiddenGroups[g];
     if (sel && isHidden(groupOf(sel.k))) sel = null;
@@ -463,7 +484,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     layer.textContent = '';
     var names = $('showNames').checked;
     eachMarker(function (m, k, i) {
-      if (isHidden(groupOf(k))) return;
+      var isSel = sel && sel.k === k && sel.i === i;
+      if (isHidden(groupOf(k)) || (!isSel && !nameOk(m.name))) return;
       var g = groupOf(k), b = el('button', 'mk' + (sel && sel.k === k && sel.i === i ? ' on' : ''));
       b.type = 'button'; b.dataset.k = k; b.dataset.i = i;
       b.setAttribute('aria-label', (m.name || m.id || 'Marker') + ' (' + groupName(g) + ')');
@@ -515,9 +537,10 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function renderList() {
     var box = $('list'); box.textContent = '';
     var n = 0;
-    var hid = 0;
+    var hid = 0, filtered = 0;
     eachMarker(function (m, k, i) {
       if (isHidden(groupOf(k))) { hid++; return; }
+      if (!nameOk(m.name) && !(sel && sel.k === k && sel.i === i)) { filtered++; return; }
       n++;
       var p = getXY(m), b = el('button', 'row' + (sel && sel.k === k && sel.i === i ? ' on' : '')); b.type = 'button';
       b.appendChild(swatch(groupOf(k))); b.appendChild(el('span', 'nm', m.name || String(m.id || '(unnamed)')));
@@ -528,7 +551,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       });
       box.appendChild(b);
     });
-    $('listTitle').textContent = 'Markers (' + n + ')' + (hid ? ' · ' + hid + ' hidden' : '');
+    $('listTitle').textContent = 'Markers (' + n + ')' + (hid ? ' · ' + hid + ' hidden' : '') + (filtered ? ' · ' + filtered + ' not matching' : '');
     if (!n) box.appendChild(el('p', 'note', 'No markers yet. Turn on “Add marker” and click the map.'));
   }
 
@@ -606,6 +629,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var otherKind = isLinks() ? 'areas' : 'zoneLinks';
     listOf(otherKind).forEach(function (a) {
       if (isHidden(otherKind === 'zoneLinks' ? (a.group || 'amZone') : a.group)) return;
+      if (!nameOk(otherKind === 'zoneLinks' ? [a.name] : areaAllNames(a))) return;
       var pts = (a.points || []).map(ptFrac);
       if (pts.length < 3) return;
       var sh = document.createElementNS(ns, 'polygon');
@@ -617,6 +641,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       var pts = (a.points || []).map(ptFrac);
       if (!pts.length) return;
       if (i !== selA && isHidden(isLinks() ? (a.group || 'amZone') : a.group)) return;   // its group is hidden (a selected one still shows)
+      if (i !== selA && !nameOk(isLinks() ? [a.name] : areaAllNames(a))) return;        // name filter
       var str = pts.map(function (f) { return (f.fx * 1000).toFixed(1) + ',' + (f.fy * 1000).toFixed(1); }).join(' ');
       var open = drawing && i === selA, shape = document.createElementNS(ns, open || pts.length < 3 ? 'polyline' : 'polygon');
       shape.setAttribute('points', str);
@@ -1155,6 +1180,11 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   $('kindAreas').addEventListener('click', function () { setKind('areas'); });
   $('kindLinks').addEventListener('click', function () { setKind('zoneLinks'); });
   $('kindAreasTop').addEventListener('click', function () { setKind('areas'); });
+  $('nameFilter').addEventListener('input', function () { setNameFilter(this.value); });
+  $('nameFilter').addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); setNameFilter(''); } });
+  $('filtClear').addEventListener('click', function () { setNameFilter(''); });
+  $('onlyNameBtn').addEventListener('click', function () { var m = cur(); if (m && m.name) setNameFilter('"' + plainName(m.name) + '"'); });
+  $('aOnlyNameBtn').addEventListener('click', function () { var a = curA(); if (a && a.name) setNameFilter('"' + plainName(a.name) + '"'); });
   $('visAll').addEventListener('click', function () { hiddenGroups = {}; saveHidden(); render(); });
   $('visNone').addEventListener('click', function () { groupIds().forEach(function (g) { hiddenGroups[g] = 1; }); sel = null; saveHidden(); render(); });
   $('kindLinksTop').addEventListener('click', function () { setKind('zoneLinks'); });
