@@ -199,8 +199,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
           <label class="wide">Article link (page title<span class="mobOnly">, optional</span>)<input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
           <label class="wide mobOnly">More mobs in this area (one per line)<textarea id="aMobs" rows="3" placeholder="a skeletal excavator&#10;a filthy rat | NPC:A filthy rat (sewers)"></textarea></label>
           <p class="note wide mobOnly">Each one links to NPC:<em>its name</em>; add “| page” after a name to link another page.</p>
-          <label class="wide linkOnly"><span><input id="aLabel" type="checkbox"> Show its name on the map</span></label>
-          <p class="note wide linkOnly">Leave the name off for a zone already named on the picture. Turn it on for a link out at the edge (e.g. “The Ruins of Harbourview →”): its name shows as a label you can drag to place, and the label is clickable too. With a colour the shape is lightly tinted; without one it only shows when hovered.</p>
+          <p class="note wide linkOnly">Its name shows on the map as a label (clickable too); drag the label to place it. For a link out at the edge, a name like “The Ruins of Harbourview →” works well. With a colour the shape is lightly tinted; without one it only shows when hovered.</p>
           <p class="note wide" id="aHelp">Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.</p>
           <div class="wide areabtns">
             <button id="finishBtn" class="primary" type="button" hidden>Finish shape</button>
@@ -588,13 +587,12 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       shape.setAttribute('data-a', i);
       if (i === selA) shape.setAttribute('class', 'on');
       svg.appendChild(shape);
-      if (pts.length >= 3 && !open && (isLinks() ? (a.label || i === selA) : names)) {
+      if (pts.length >= 3 && !open && (isLinks() || names)) {
         var cx = 0, cy = 0; pts.forEach(function (f) { cx += f.fx; cy += f.fy; });
         var lf = { fx: cx / pts.length, fy: cy / pts.length };
         if (isLinks() && Array.isArray(a.labelAt)) lf = ptFrac(a.labelAt);
-        var lab = el('div', 'alab' + (isLinks() && a.label && i === selA ? ' zlab' : ''),
-                     isLinks() ? (a.name || areaName(a, i)) + (a.label ? '' : '  (link only)') : areaNames(a, i));
-        if (isLinks() && a.label && i === selA) { lab.dataset.zl = i; lab.title = 'Drag to place the name'; }
+        var lab = el('div', 'alab' + (isLinks() && i === selA ? ' zlab' : ''), isLinks() ? (a.name || areaName(a, i)) : areaNames(a, i));
+        if (isLinks() && i === selA) { lab.dataset.zl = i; lab.title = 'Drag to place the name'; }
         lab.style.left = (lf.fx * 100) + '%'; lab.style.top = (lf.fy * 100) + '%';
         hd.appendChild(lab);
       }
@@ -639,7 +637,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     $('kindAreas').setAttribute('aria-pressed', String(!links)); $('kindLinks').setAttribute('aria-pressed', String(links));
     $('kindAreasTop').setAttribute('aria-pressed', String(!links)); $('kindLinksTop').setAttribute('aria-pressed', String(links));
     $('kindNote').textContent = links
-      ? 'Clickable shapes that open another page, e.g. a town tinted on the picture (Zone:The City of Leont), or a zone just past the map\'s edge. “+ Draw area” in the toolbar draws a new one.'
+      ? 'Clickable shapes that open another page, e.g. a town tinted on the picture (Zone:The City of Leont), or a zone just past the map\'s edge. “+ Draw zone link” in the toolbar draws a new one.'
       : 'Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.';
     $('drawBtn').textContent = links ? '+ Draw zone link' : '+ Draw area';
     $('aDelBtn').textContent = links ? 'Delete zone link' : 'Delete area';
@@ -651,7 +649,6 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var a = curA();
     $('aForm').hidden = !a;
     if (!a) return;
-    $('aLabel').checked = !!a.label;
     $('aName').value = a.name || '';
     fillGroupSelect($('aGroup'), a.group || '');
     $('aColor').value = a.color || '';
@@ -661,7 +658,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     $('aHelp').textContent = drawing
       ? 'Press and drag on the map to draw a box, or click corner by corner (click the first corner, press Enter or “Finish shape” when done). “Make it a box” drops a box to move into place.'
       : 'Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.' +
-        (links && a.label ? ' Drag the name label to place it.' : '');
+        (links ? ' Drag the name label to place it.' : '');
   }
 
   function render() { renderGroups(); renderList(); renderMarkers(); renderAreas(); renderAreaPanel(); renderEditor(); renderHint(); writeJSON(); }
@@ -1103,12 +1100,6 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     areaField('mobs', list.length ? list : null);
   });
   $('aGroup').addEventListener('change', function () { ensureGroup(this.value); areaField('group', this.value); renderGroups(); });
-  $('aLabel').addEventListener('change', function () {
-    pushUndo();
-    var a = curA(); if (!a) return;
-    if (this.checked) a.label = true; else { delete a.label; delete a.labelAt; }
-    renderAreas(); renderAreaPanel(); writeJSON();
-  });
   function setKind(k) {
     if (k === areaKind) return;
     if (drawing) finishDraw();
