@@ -696,8 +696,16 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
 		var cx = 0, cy = 0;
 		for ( i = 0; i < pts.length; i++ ) { cx += pts[ i ][ 0 ]; cy += pts[ i ][ 1 ]; }
 		var best = cell( cx / pts.length, cy / pts.length, 0 ), guard = 0;
-		while ( queue.length && guard++ < 20000 ) {
-			queue.sort( function ( a, b ) { return a.max - b.max; } );
+		queue.sort( function ( a, b ) { return a.max - b.max; } );
+		function add( c ) {             // keep the queue sorted (best last)
+			var lo = 0, hi = queue.length;
+			while ( lo < hi ) {
+				var mid = ( lo + hi ) >> 1;
+				if ( queue[ mid ].max < c.max ) { lo = mid + 1; } else { hi = mid; }
+			}
+			queue.splice( lo, 0, c );
+		}
+		while ( queue.length && guard++ < 5000 ) {
 			var c = queue.pop();
 			if ( c.d > best.d ) {
 				best = c;
@@ -706,11 +714,18 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
 				continue;
 			}
 			var hh = c.h / 2;
-			queue.push( cell( c.x - hh, c.y - hh, hh ), cell( c.x + hh, c.y - hh, hh ),
-				cell( c.x - hh, c.y + hh, hh ), cell( c.x + hh, c.y + hh, hh ) );
+			add( cell( c.x - hh, c.y - hh, hh ) ); add( cell( c.x + hh, c.y - hh, hh ) );
+			add( cell( c.x - hh, c.y + hh, hh ) ); add( cell( c.x + hh, c.y + hh, hh ) );
 		}
 		return [ best.x, best.y ];
 	}
+  // Same answer for the same corners: remembered, so redrawing 150 areas stays quick.
+  var labelCache = {};
+  function insideLabelCached(pts) {
+    var k = JSON.stringify(pts);
+    if (!labelCache[k]) { labelCache[k] = insideLabelPoint(pts); if (Object.keys(labelCache).length > 3000) labelCache = {}; }
+    return labelCache[k];
+  }
 
   function renderAreas() {
     var svg = $('areaSvg'), hd = $('handles'), l = areaList(), ns = 'http://www.w3.org/2000/svg';
@@ -746,7 +761,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
         var lf;
         if (Array.isArray(a.labelAt)) lf = ptFrac(a.labelAt);
         else {
-          var q = insideLabelPoint((a.points || []).map(function (p) { return [Number(p[1]), Number(p[0])]; }));
+          var q = insideLabelCached((a.points || []).map(function (p) { return [Number(p[1]), Number(p[0])]; }));
           lf = ptFrac([q[1], q[0]]);
         }
         var lab = el('div', 'alab' + (i === selA ? ' zlab' : ''), isLinks() ? (a.name || areaName(a, i)) : areaNames(a, i));
