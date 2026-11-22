@@ -102,6 +102,7 @@ aside { display: flex; flex-direction: column; gap: 12px; min-width: 0 }
 .form input, .form select, .form textarea, textarea#json { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; color: var(--fg); width: 100%; min-width: 0 }
 .form input.num { font-family: var(--mono) }
 .form textarea { resize: vertical; min-height: 54px }
+.form textarea#aName { min-height: 0; resize: none; overflow: hidden; line-height: 1.35 }
 
 /* areas (mob spawn areas etc.): SVG shapes under the markers, corner handles on top */
 svg.areas { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible }
@@ -211,13 +212,13 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
         </div>
         <p class="note" id="kindNote">Shaded shapes, e.g. where a mob can spawn. “+ Draw area” in the toolbar, or “Turn into area” on a marker.</p>
         <div class="form" id="aForm" hidden>
-          <label class="wide">Name<input id="aName" type="text"></label>
+          <label class="wide">Name<textarea id="aName" rows="1" spellcheck="false" title="Enter starts a second line (zone links show it below the first)"></textarea></label>
           <label class="mobOnly">Group<select id="aGroup"></select></label>
           <label>Colour (optional)<input id="aColor" type="text" placeholder="group colour"></label>
           <label class="wide"><span>Article link (page title<span class="mobOnly">, optional</span>)</span><input id="aArticle" type="text" placeholder="NPC:A grainmaw nymph"></label>
           <label class="wide mobOnly">More mobs in this area (one per line)<textarea id="aMobs" rows="3" placeholder="a skeletal excavator&#10;a filthy rat | NPC:A filthy rat (sewers)"></textarea></label>
           <p class="note wide mobOnly">Each one links to NPC:<em>its name</em>; add “| page” after a name to link another page.</p>
-          <p class="note wide linkOnly">Its name shows on the map as a label (clickable too); drag the label to place it. For a link out at the edge, a name like “The Ruins of Harbourview →” works well. With a colour the shape is lightly tinted; without one it only shows when hovered.</p>
+          <p class="note wide linkOnly">Its name shows on the map as a label (clickable too); drag the label to place it. For a link out at the edge, a name like “The Ruins of Harbourview →” works well. Press Enter in the name for a second line, e.g. “(Main Entrance)” under the zone name. With a colour the shape is lightly tinted; without one it only shows when hovered.</p>
           <p class="note wide" id="aHelp">Drag a corner to move it, drag the shape to move it all, click a + to add a corner, Shift+click a corner to remove it.</p>
           <div class="wide areabtns">
             <button id="aOnlyNameBtn" type="button" title="Hide every other name on the map, to work on this one">Only show this name</button>
@@ -802,7 +803,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
       if (i !== selA && (!nameOk(isLinks() ? [a.name] : areaAllNames(a)) || isHidden(isLinks() ? (a.group || 'amZone') : a.group))) { skipped++; return; }
       var b = el('button', 'row' + (i === selA ? ' on' : '')); b.type = 'button';
       var sw = el('span', 'sw'); sw.style.setProperty('--c', areaColour(a)); sw.style.borderRadius = '3px';
-      b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i) + (isLinks() ? (a.article ? '  ·  ' + a.article : '') : (areaMobs(a).length ? ' + ' + areaMobs(a).length + ' more' : ''))));
+      b.appendChild(sw); b.appendChild(el('span', 'nm', areaName(a, i).replace(/\s*\n\s*/g, ' ') + (isLinks() ? (a.article ? '  ·  ' + a.article : '') : (areaMobs(a).length ? ' + ' + areaMobs(a).length + ' more' : ''))));
       b.appendChild(el('span', 'num', (a.points || []).length + ' corners'));
       b.addEventListener('click', function () { if (drawing) finishDraw(); selA = i; sel = null; render(); });
       box.appendChild(b);
@@ -824,7 +825,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     var a = curA();
     $('aForm').hidden = !a;
     if (!a) return;
-    $('aName').value = a.name || '';
+    $('aName').value = a.name || ''; setTimeout(fitName, 0);
     fillGroupSelect($('aGroup'), a.group || '');
     $('aColor').value = a.color || '';
     $('aArticle').value = a.article || '';
@@ -1318,7 +1319,8 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     if (val === '' || val == null) delete a[key]; else a[key] = val;
     renderAreas(); renderAreaPanel(); writeJSON();
   }
-  $('aName').addEventListener('input', function () { areaField('name', this.value); });
+  function fitName() { var t = $('aName'); t.style.height = 'auto'; t.style.height = (t.scrollHeight + 2) + 'px'; }
+  $('aName').addEventListener('input', function () { fitName(); areaField('name', this.value); });
   $('aArticle').addEventListener('input', function () { areaField('article', this.value.trim()); });
   $('aColor').addEventListener('input', function () { areaField('color', this.value.trim()); });
   $('aMobs').addEventListener('input', function () {
