@@ -226,6 +226,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
             <button id="aMergeBtn" type="button" title="Removes corners that barely change the shape (closer to a straight line than the tolerance) and merges corners that sit close together">Merge corners</button>
             <label class="tol" title="How much the outline may change, in map units (the same units as x / y)">within <input id="aTol" type="number" min="0.05" step="0.05" value="0.5"></label>
             <button id="aBoxBtn" type="button" title="Turns the area into a plain 4-corner box around its current shape">Make it a box</button>
+            <button class="mobOnly" id="aToMarkerBtn" type="button" title="Back to a plain marker (dot) where the area's name is, with its name, group, page and level; the area is removed. Each extra mob in the area gets a marker there too.">Turn into marker</button>
             <button class="danger" id="aDelBtn" type="button">Delete area</button>
           </div>
         </div>
@@ -1237,6 +1238,52 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     tidyAreas(); render();
   }
   $('aDelBtn').addEventListener('click', removeArea);
+
+  // Area -> marker(s): a dot where the area's name sits (its dragged label spot, else the spot farthest inside),
+  // with the area's name, group, page and level; every extra mob in the area gets its own dot on the same spot.
+  function areaToMarker() {
+    if (isLinks()) return;
+    var a = curA(); if (!a) return;
+    var f;
+    if (Array.isArray(a.labelAt)) f = ptFrac(a.labelAt);
+    else {
+      var q = insideLabelCached((a.points || []).map(function (p) { return [Number(p[1]), Number(p[0])]; }));
+      f = ptFrac([q[1], q[0]]);
+    }
+    var g = a.group || activeGroup;
+    if (!g) { say('This area has no group to put the marker in.', 'bad'); return; }
+    pushUndo();
+    ensureGroup(g);
+    if (isHidden(g)) { delete hiddenGroups[g]; saveHidden(); }
+    if (!data.markers || typeof data.markers !== 'object') data.markers = {};
+    var key = g;
+    if (!data.markers[key]) {
+      var alt = Object.keys(data.markers).filter(function (k) { return groupOf(k) === g; })[0];
+      if (alt) key = alt; else data.markers[key] = [];
+    }
+    var ids = allIds(), p = fromFrac(clamp(f.fx), clamp(f.fy)), made = 0;
+    function add(name, article, level) {
+      var slug = String(name || 'marker').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'marker';
+      var id = 'ent-' + slug + '-1', n = 1;
+      while (ids[id]) { n++; id = 'ent-' + slug + '-' + n; }
+      ids[id] = 1;
+      var m = { id: id, x: p.x, y: p.y, name: name, description: [groupName(g).replace(/\(s\)$/, '')] };
+      if (level != null && String(level).trim()) {
+        m.description.push('<span class="npc-map-level">Level ' + String(level).trim() + '</span>');
+        m.isWikitext = true;
+      }
+      if (article) m.article = article;
+      data.markers[key].push(m);
+      made++;
+    }
+    add(a.name || 'Marker', a.article, a.level);
+    areaMobs(a).forEach(function (mb) { add(mb.name, mb.article, mb.level); });
+    var l = areaList(); l.splice(selA, 1); selA = null;
+    sel = { k: key, i: data.markers[key].length - made };
+    tidyAreas(); render();
+    say((made > 1 ? made + ' markers' : 'A marker') + ' made where the area was; the area is gone (Undo brings it back).', 'ok');
+  }
+  $('aToMarkerBtn').addEventListener('click', areaToMarker);
 
   // ---------- tidy an area's corners ----------
   // Points are [a, b] pairs in map units; both axes use the same units, so distances work directly.
