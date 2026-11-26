@@ -56,7 +56,7 @@ input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0 }
 @media (min-width: 1400px) { .work { grid-template-columns: minmax(0, 1fr) 320px 330px } .work > .side2 { grid-column: 3; grid-row: 1 } }
 @media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr) } .work > .side2 { grid-column: 1 } }
 .side2 .card { position: sticky; top: 8px }
-.viewport { background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; overflow: auto; min-height: 240px }
+.viewport { position: relative; background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; overflow: auto; min-height: 240px }
 .stage { position: relative; margin: 0 auto; user-select: none; -webkit-user-select: none;
   background-color: var(--sunk);
   background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
@@ -159,7 +159,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
     <label class="chk"><input type="checkbox" id="showNames" checked> Show names</label>
     <span class="filt"><input type="search" id="nameFilter" placeholder="Only show names with…" title="Shows only markers and areas whose name contains this (e.g. rat). Put it in quotes for that exact name. Esc clears it."><button id="filtClear" type="button" title="Show every name again" hidden>×</button></span>
     <span class="sep"></span>
-    <label class="zoom" title="Mouse wheel over the map zooms where the pointer is; drag an empty spot to move around">Zoom <input type="range" id="zoom" min="1" max="16" step="0.25" value="1"> <span id="zoomVal">1×</span></label>
+    <label class="zoom" title="Mouse wheel over the map zooms where the pointer is; drag an empty spot to move around">Zoom <input type="range" id="zoom" min="0.5" max="16" step="0.25" value="1"> <span id="zoomVal">1×</span></label>
     <button id="fitBtn" type="button" title="Zoom out to fit the whole map">Fit</button>
     <span class="readout" id="readout" aria-live="off">x –, y –</span>
   </div>
@@ -842,37 +842,51 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   function say(msg, cls) { var s = $('status'); s.textContent = msg; s.className = cls || ''; }
 
   /* ---------- sizing and zoom ---------- */
+  // Empty space is kept around the picture (MAP_MARGIN of the view on every side), so markers and names right at
+  // an edge can be scrolled into the middle, and the map can be zoomed out below 1x (smaller than the view).
+  var MAP_MARGIN = 0.3;
   function layout(keepCentre) {
     var cx = 0.5, cy = 0.5, sw = stage.offsetWidth, sh = stage.offsetHeight;
-    if (keepCentre && sw && sh) { cx = (viewport.scrollLeft + viewport.clientWidth / 2) / sw; cy = (viewport.scrollTop + viewport.clientHeight / 2) / sh; }
+    if (keepCentre && sw && sh) {
+      cx = (viewport.scrollLeft + viewport.clientWidth / 2 - stage.offsetLeft) / sw;
+      cy = (viewport.scrollTop + viewport.clientHeight / 2 - stage.offsetTop) / sh;
+    }
     var avail = viewport.parentElement.clientWidth - 2;
     var maxH = Math.max(320, window.innerHeight * 0.8);
     var fitW = Math.min(avail, maxH * aspect);
     viewport.style.height = Math.round(fitW / aspect + 2) + 'px';
-    stage.style.width = Math.round(fitW * zoom) + 'px';
-    stage.style.height = Math.round(fitW * zoom / aspect) + 'px';
+    var w = Math.round(fitW * zoom), h = Math.round(fitW * zoom / aspect);
+    stage.style.width = w + 'px';
+    stage.style.height = h + 'px';
+    var vw = viewport.clientWidth, vh = viewport.clientHeight;
+    var mx = Math.max(Math.round(vw * MAP_MARGIN), Math.round((vw - w) / 2));
+    var my = Math.max(Math.round(vh * MAP_MARGIN), Math.round((vh - h) / 2));
+    stage.style.margin = my + 'px ' + mx + 'px';
     if (keepCentre) {
-      viewport.scrollLeft = cx * stage.offsetWidth - viewport.clientWidth / 2;
-      viewport.scrollTop = cy * stage.offsetHeight - viewport.clientHeight / 2;
+      viewport.scrollLeft = stage.offsetLeft + cx * stage.offsetWidth - vw / 2;
+      viewport.scrollTop = stage.offsetTop + cy * stage.offsetHeight - vh / 2;
+    } else {
+      viewport.scrollLeft = stage.offsetLeft + w / 2 - vw / 2;      // the picture in the middle of the view
+      viewport.scrollTop = stage.offsetTop + h / 2 - vh / 2;
     }
   }
   // Zoom so the spot under (clientX, clientY) stays put; no point = keep the middle of the view.
   function setZoom(z, clientX, clientY) {
-    z = Math.max(1, Math.min(16, Math.round(z * 100) / 100));
+    z = Math.max(0.5, Math.min(16, Math.round(z * 100) / 100));
     if (z === zoom) return;
     if (clientX == null) { zoom = z; layout(true); }
     else {
       var r = stage.getBoundingClientRect(), v = viewport.getBoundingClientRect();
       var fx = (clientX - r.left) / r.width, fy = (clientY - r.top) / r.height;
       zoom = z; layout(false);
-      viewport.scrollLeft = fx * stage.offsetWidth - (clientX - v.left);
-      viewport.scrollTop = fy * stage.offsetHeight - (clientY - v.top);
+      viewport.scrollLeft = stage.offsetLeft + fx * stage.offsetWidth - (clientX - v.left);
+      viewport.scrollTop = stage.offsetTop + fy * stage.offsetHeight - (clientY - v.top);
     }
     $('zoom').value = zoom;
     $('zoomVal').textContent = (zoom % 1 ? zoom.toFixed(2).replace(/0$/, '') : zoom) + '×';
   }
   $('zoom').addEventListener('input', function () { setZoom(Number(this.value) || 1); });
-  $('fitBtn').addEventListener('click', function () { setZoom(1); });
+  $('fitBtn').addEventListener('click', function () { if (zoom === 1) layout(false); else setZoom(1); layout(false); });
   // Mouse wheel / trackpad pinch over the map: zoom in and out where the pointer is.
   viewport.addEventListener('wheel', function (e) {
     e.preventDefault();
@@ -1004,7 +1018,7 @@ textarea#json { font: 12.5px/1.5 var(--mono); height: 340px; resize: vertical; t
   // The middle of what's on screen, as a share of the picture.
   function centreFrac() {
     var sw = stage.offsetWidth || 1, sh = stage.offsetHeight || 1;
-    return { fx: clamp((viewport.scrollLeft + viewport.clientWidth / 2) / sw), fy: clamp((viewport.scrollTop + viewport.clientHeight / 2) / sh) };
+    return { fx: clamp((viewport.scrollLeft + viewport.clientWidth / 2 - stage.offsetLeft) / sw), fy: clamp((viewport.scrollTop + viewport.clientHeight / 2 - stage.offsetTop) / sh) };
   }
   function addCorner(f) {
     var a = curA(); if (!a) return;
